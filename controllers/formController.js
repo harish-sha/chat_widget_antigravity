@@ -78,7 +78,7 @@ exports.getSubmissionsByVersion = (req, res) => {
 
     const total = countResult[0].total;
     const sql = `
-      SELECT id, answers, meta, session_id, created_at
+      SELECT id, answers, meta, session_id, conversation_id, created_at
       FROM form_submissions
       ${whereClause}
       ORDER BY created_at DESC

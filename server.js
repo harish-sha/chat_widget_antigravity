@@ -6,6 +6,7 @@ const widgetRoutes = require("./routes/widgetRoutes");
 const formRoutes = require("./routes/formRoutes");
 const conversationRoutes = require("./routes/conversationRoutes");
 const messageRoutes = require("./routes/messageRoutes");
+const aiRoutes = require("./routes/aiRoutes");
 
 const app = express();
 
@@ -19,6 +20,7 @@ app.use("/form", formRoutes);
 app.use("/conversation", conversationRoutes);
 app.use("/conversations", conversationRoutes); // For paths like /conversations/:widgetId
 app.use("/messages", messageRoutes);
+app.use("/ai", aiRoutes);
 
 app.listen(8000, () => {
   console.log("Server running on port 8000");
