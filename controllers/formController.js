@@ -2,7 +2,7 @@ const db = require("../db");
 const { v4: uuidv4 } = require("uuid");
 
 exports.submitForm = (req, res) => {
-  const { widgetId, answers, meta } = req.body;
+  const { widgetId, conversationId, answers, meta } = req.body;
   const sessionId = req.headers["x-session-id"] || uuidv4();
   const sql = `SELECT config FROM widgets WHERE widget_id = ?`;
 
@@ -21,16 +21,28 @@ exports.submitForm = (req, res) => {
     const formVersion = config?.surveyForm?.formVersion || 1;
     const insertSql = `
       INSERT INTO form_submissions 
-      (widget_id, form_version, answers, session_id, meta)
-      VALUES (?, ?, ?, ?, ?)
+      (widget_id, form_version, answers, session_id, conversation_id, meta)
+      VALUES (?, ?, ?, ?, ?, ?)
     `;
 
     db.query(
       insertSql,
-      [widgetId, formVersion, JSON.stringify(answers), sessionId, JSON.stringify(meta || {})],
+      [widgetId, formVersion, JSON.stringify(answers), sessionId, conversationId || null, JSON.stringify(meta || {})],
       (err) => {
         if (err) return res.status(500).json({ error: err });
-        res.json({ success: true, sessionId });
+
+        if (conversationId) {
+          const messageSql = `
+            INSERT INTO messages (conversation_id, sender, message, message_type)
+            VALUES (?, 'user', ?, 'form_submission')
+          `;
+          db.query(messageSql, [conversationId, JSON.stringify(answers)], (msgErr) => {
+            if (msgErr) console.error("Error saving form message:", msgErr);
+            res.json({ success: true, sessionId, message: "Form submitted and attached to conversation" });
+          });
+        } else {
+          res.json({ success: true, sessionId, message: "Form submitted" });
+        }
       }
     );
   });
