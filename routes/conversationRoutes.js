@@ -4,6 +4,7 @@ const conversationController = require("../controllers/conversationController");
 
 router.post("/create", conversationController.createConversation);
 router.post("/resolve", conversationController.resolveConversation);
+router.post("/:id/bot-status", conversationController.toggleBotStatus);
 router.get("/:widgetId", conversationController.getConversations);
 
 module.exports = router;

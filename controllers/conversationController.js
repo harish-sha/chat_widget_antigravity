@@ -107,3 +107,22 @@ exports.resolveConversation = (req, res) => {
     }
   );
 };
+
+exports.toggleBotStatus = (req, res) => {
+  const { id } = req.params;
+  const { botActive } = req.body;
+  const sql = `UPDATE conversations SET bot_active = ? WHERE id = ?`;
+  db.query(sql, [botActive ? 1 : 0, id], (err) => {
+    if (err) return res.status(500).json({ error: err });
+
+    const msgSql = `
+      INSERT INTO messages (conversation_id, sender, message, message_type)
+      VALUES (?, 'system', ?, 'system')
+    `;
+    const sysMsg = botActive ? 'AI Assistant is now enabled.' : 'AI Assistant is now disabled by an Agent.';
+    
+    db.query(msgSql, [id, sysMsg], (err2) => {
+      res.json({ success: true, botActive, message: "Bot status updated" });
+    });
+  });
+};

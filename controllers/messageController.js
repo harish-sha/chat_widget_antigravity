@@ -1,35 +1,128 @@
 const db = require("../db");
+const OpenAI = require("openai");
+
+async function triggerAIResponse(conversationId, widgetId, userMessage) {
+  const settingsSql = `SELECT * FROM widget_ai_settings WHERE widget_id = ? AND is_enabled = TRUE`;
+  
+  db.query(settingsSql, [widgetId], (err, settingsResult) => {
+    if (err || !settingsResult.length) return;
+    
+    const settings = settingsResult[0];
+    if (!settings.api_key) return;
+    
+    const kbSql = `SELECT content FROM ai_knowledge_base WHERE widget_id = ? AND status = 'active'`;
+    db.query(kbSql, [widgetId], async (err, kbResult) => {
+      let kbContext = "";
+      if (!err && kbResult.length) {
+        kbContext = kbResult.map(k => k.content).join("\n\n");
+      }
+
+      const historySql = `
+        SELECT sender, message 
+        FROM (
+          SELECT sender, message, created_at FROM messages 
+          WHERE conversation_id = ? AND message_type = 'text' 
+          ORDER BY created_at DESC LIMIT 15
+        ) sub
+        ORDER BY created_at ASC
+      `;
+      
+      db.query(historySql, [conversationId], async (err, historyResult) => {
+        if (err) return;
+
+        const messages = [];
+        let sysPrompt = settings.system_prompt || "You are a helpful assistant.";
+        sysPrompt += `\nYour tone should be: ${settings.tone}.`;
+        if (settings.grammar_mode) sysPrompt += `\nPlease elegantly fix minor grammatical errors in your response context.`;
+        if (kbContext) {
+          sysPrompt += `\n\nUse the following verified knowledge context to answer questions:\n${kbContext}`;
+        }
+        
+        messages.push({ role: "system", content: sysPrompt });
+        
+        for (let msg of historyResult) {
+          if (msg.message && typeof msg.message === 'string') {
+            const role = (msg.sender === 'bot' || msg.sender === 'agent') ? 'assistant' : 'user';
+            
+            if (messages.length > 0 && messages[messages.length - 1].role === role) {
+              messages[messages.length - 1].content += "\n" + msg.message;
+            } else {
+              messages.push({ role, content: msg.message });
+            }
+          }
+        }
+        
+        if (messages.length === 0 || messages[messages.length - 1].content !== userMessage) {
+          if (messages.length > 0 && messages[messages.length - 1].role === "user") {
+            messages[messages.length - 1].content += "\n" + userMessage;
+          } else {
+            messages.push({ role: "user", content: userMessage });
+          }
+        }
+
+        try {
+          const openai = new OpenAI({ apiKey: settings.api_key });
+          const completion = await openai.chat.completions.create({
+            model: settings.model || "gpt-3.5-turbo",
+            messages: messages,
+            temperature: parseFloat(settings.temperature) || 0.7,
+            max_tokens: parseInt(settings.max_tokens) || 500
+          });
+          
+          const botReply = completion.choices[0].message.content;
+          
+          if (botReply) {
+             const insertReplySql = `
+              INSERT INTO messages (conversation_id, sender, message, message_type)
+              VALUES (?, 'bot', ?, 'text')
+             `;
+             db.query(insertReplySql, [conversationId, botReply]);
+          }
+
+        } catch (e) {
+          console.error("OpenAI Error:", e.message);
+          const fallback = settings.fallback_message || `AI failed to respond: ${e.message}`;
+          const errSql = `INSERT INTO messages (conversation_id, sender, message, message_type) VALUES (?, 'system', ?, 'system')`;
+          db.query(errSql, [conversationId, fallback]);
+        }
+      });
+    });
+  });
+}
 
 exports.sendMessage = (req, res) => {
-  const { conversationId, sender, message, messageType, meta } = req.body;
+  const { conversationId, sender, message, messageType, meta, mediaUrl, fileName, fileSize } = req.body;
 
   if (!["user", "agent", "bot", "system"].includes(sender)) {
     return res.status(400).json({ error: "Invalid sender" });
   }
 
   const insertUserSql = `
-    INSERT INTO messages (conversation_id, sender, message, message_type)
-    VALUES (?, ?, ?, ?)
+    INSERT INTO messages (conversation_id, sender, message, message_type, media_url, file_name, file_size, meta)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `;
 
-  db.query(insertUserSql, [conversationId, sender, message, messageType], (err) => {
-    if (err) return res.status(500).json({ error: err });
+  db.query(
+    insertUserSql,
+    [conversationId, sender, message || null, messageType || "text", mediaUrl || null, fileName || null, fileSize || null, meta ? JSON.stringify(meta) : null],
+    (err) => {
+      if (err) return res.status(500).json({ error: err });
 
-    if (sender === "user") {
-      let botReply = null;
-      if (meta?.type === "starter") botReply = meta?.answer;
-      if (messageType === "quick_reply") botReply = meta?.replyValue;
-
-      if (botReply) {
-        const botSql = `
-          INSERT INTO messages (conversation_id, sender, message, message_type)
-          VALUES (?, 'bot', ?, 'text')
-        `;
-        db.query(botSql, [conversationId, botReply]);
+      if (sender === "user" && messageType === "text" && message) {
+        const convSql = `SELECT widget_id, bot_active FROM conversations WHERE id = ?`;
+        db.query(convSql, [conversationId], (err, convResult) => {
+           if (!err && convResult.length > 0) {
+             const { widget_id, bot_active } = convResult[0];
+             if (bot_active) {
+                triggerAIResponse(conversationId, widget_id, message);
+             }
+           }
+        });
       }
+
+      res.json({ success: true });
     }
-    res.json({ success: true });
-  });
+  );
 };
 
 exports.sendStarterMessage = (req, res) => {
@@ -80,5 +173,21 @@ exports.getMessages = (req, res) => {
         messages: result.reverse(),
       });
     });
+  });
+};
+
+exports.syncMessages = (req, res) => {
+  const { conversationId } = req.params;
+  const afterId = Number(req.query.afterId) || 0;
+
+  const sql = `
+    SELECT * FROM messages 
+    WHERE conversation_id = ? AND id > ? 
+    ORDER BY created_at ASC
+  `;
+
+  db.query(sql, [conversationId, afterId], (err, results) => {
+    if (err) return res.status(500).json({ error: err });
+    res.json({ success: true, count: results.length, messages: results });
   });
 };
