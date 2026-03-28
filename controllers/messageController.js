@@ -38,8 +38,6 @@ async function triggerAIResponse(conversationId, widgetId, userMessage) {
           sysPrompt += `\n\nUse the following verified knowledge context to answer questions:\n${kbContext}`;
         }
         
-        messages.push({ role: "system", content: sysPrompt });
-        
         for (let msg of historyResult) {
           if (msg.message && typeof msg.message === 'string') {
             const role = (msg.sender === 'bot' || msg.sender === 'agent') ? 'assistant' : 'user';
@@ -61,15 +59,16 @@ async function triggerAIResponse(conversationId, widgetId, userMessage) {
         }
 
         try {
-          const openai = new OpenAI({ apiKey: settings.api_key });
-          const completion = await openai.chat.completions.create({
-            model: settings.model || "gpt-3.5-turbo",
-            messages: messages,
-            temperature: parseFloat(settings.temperature) || 0.7,
-            max_tokens: parseInt(settings.max_tokens) || 500
+          const aiService = require("../services/aiService");
+          const botReply = await aiService.generate({
+            provider: settings.provider,
+            apiKey: settings.api_key,
+            model: settings.model,
+            temperature: settings.temperature,
+            maxTokens: settings.max_tokens,
+            systemPrompt: sysPrompt,
+            messages: messages
           });
-          
-          const botReply = completion.choices[0].message.content;
           
           if (botReply) {
              const insertReplySql = `
@@ -80,7 +79,7 @@ async function triggerAIResponse(conversationId, widgetId, userMessage) {
           }
 
         } catch (e) {
-          console.error("OpenAI Error:", e.message);
+          console.error("AI Gen Error:", e.message);
           const fallback = settings.fallback_message || `AI failed to respond: ${e.message}`;
           const errSql = `INSERT INTO messages (conversation_id, sender, message, message_type) VALUES (?, 'system', ?, 'system')`;
           db.query(errSql, [conversationId, fallback]);
