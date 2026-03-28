@@ -148,19 +148,21 @@ exports.agentAssist = (req, res) => {
       if (context_instruction) sysPrompt += `\nSpecial instructions: ${context_instruction}`;
       if (kbContext) sysPrompt += `\n\nVerified Knowledge Context:\n${kbContext}`;
 
-      messages.push({ role: "system", content: sysPrompt });
       messages.push({ role: "user", content: question });
 
       try {
-        const openai = new OpenAI({ apiKey: settings.api_key });
-        const completion = await openai.chat.completions.create({
-          model: settings.model || "gpt-3.5-turbo",
-          messages: messages,
-          temperature: parseFloat(settings.temperature) || 0.7,
-          max_tokens: parseInt(settings.max_tokens) || 500
+        const aiService = require("../services/aiService");
+        const answer = await aiService.generate({
+          provider: settings.provider,
+          apiKey: settings.api_key,
+          model: settings.model,
+          temperature: settings.temperature,
+          maxTokens: settings.max_tokens,
+          systemPrompt: sysPrompt,
+          messages: messages
         });
 
-        res.json({ success: true, answer: completion.choices[0].message.content });
+        res.json({ success: true, answer: answer });
       } catch (e) {
         res.status(500).json({ error: e.message });
       }
