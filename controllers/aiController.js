@@ -10,37 +10,29 @@ exports.getSettings = (req, res) => {
   });
 };
 
-exports.updateSettings = (req, res) => {
+exports.updateAdminSettings = (req, res) => {
   const { widgetId } = req.params;
-  const { is_enabled, provider, api_key, system_prompt, tone, grammar_mode, model, temperature, max_tokens, fallback_message } = req.body;
+  const { provider, api_key, model, temperature, max_tokens, fallback_message } = req.body;
 
   const sql = `
     INSERT INTO widget_ai_settings 
-      (widget_id, is_enabled, provider, api_key, system_prompt, tone, grammar_mode, model, temperature, max_tokens, fallback_message)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (widget_id, provider, api_key, model, temperature, max_tokens, fallback_message)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
     ON DUPLICATE KEY UPDATE 
-      is_enabled = ?, provider = ?, api_key = ?, system_prompt = ?, tone = ?, grammar_mode = ?, model = ?, temperature = ?, max_tokens = ?, fallback_message = ?
+      provider = ?, api_key = ?, model = ?, temperature = ?, max_tokens = ?, fallback_message = ?
   `;
 
   const values = [
     widgetId,
-    is_enabled || false,
     provider || 'openai',
     api_key || null,
-    system_prompt || null,
-    tone || 'professional',
-    grammar_mode || false,
     model || 'gpt-3.5-turbo',
     temperature ?? 0.70,
     max_tokens || 500,
     fallback_message || null,
 
-    is_enabled || false,
     provider || 'openai',
     api_key || null,
-    system_prompt || null,
-    tone || 'professional',
-    grammar_mode || false,
     model || 'gpt-3.5-turbo',
     temperature ?? 0.70,
     max_tokens || 500,
@@ -49,7 +41,38 @@ exports.updateSettings = (req, res) => {
 
   db.query(sql, values, (err) => {
     if (err) return res.status(500).json({ error: err });
-    res.json({ success: true, message: "Advanced AI Settings updated" });
+    res.json({ success: true, message: "Admin AI Settings secured and updated" });
+  });
+};
+
+exports.updateAgentSettings = (req, res) => {
+  const { widgetId } = req.params;
+  const { is_enabled, system_prompt, tone, grammar_mode } = req.body;
+
+  const sql = `
+    INSERT INTO widget_ai_settings 
+      (widget_id, is_enabled, system_prompt, tone, grammar_mode)
+    VALUES (?, ?, ?, ?, ?)
+    ON DUPLICATE KEY UPDATE 
+      is_enabled = ?, system_prompt = ?, tone = ?, grammar_mode = ?
+  `;
+
+  const values = [
+    widgetId,
+    is_enabled || false,
+    system_prompt || null,
+    tone || 'professional',
+    grammar_mode || false,
+
+    is_enabled || false,
+    system_prompt || null,
+    tone || 'professional',
+    grammar_mode || false
+  ];
+
+  db.query(sql, values, (err) => {
+    if (err) return res.status(500).json({ error: err });
+    res.json({ success: true, message: "Agent Preferences securely updated" });
   });
 };
 

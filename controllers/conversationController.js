@@ -17,7 +17,7 @@ exports.getConversations = (req, res) => {
   const page = Number(req.query.page) || 1;
   const limit = Number(req.query.limit) || 10;
   const offset = (page - 1) * limit;
-  const { status } = req.query;
+  const { status, conversationId } = req.query;
 
   let whereClause = `WHERE widget_id = ?`;
   const params = [widgetId];
@@ -25,6 +25,11 @@ exports.getConversations = (req, res) => {
   if (status) {
     whereClause += ` AND status = ?`;
     params.push(status);
+  }
+
+  if (conversationId) {
+    whereClause += ` AND id LIKE ?`;
+    params.push(`%${conversationId}%`);
   }
 
   const statsSql = `
@@ -120,7 +125,7 @@ exports.toggleBotStatus = (req, res) => {
       VALUES (?, 'system', ?, 'system')
     `;
     const sysMsg = botActive ? 'AI Assistant is now enabled.' : 'AI Assistant is now disabled by an Agent.';
-    
+
     db.query(msgSql, [id, sysMsg], (err2) => {
       res.json({ success: true, botActive, message: "Bot status updated" });
     });
