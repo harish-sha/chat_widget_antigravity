@@ -6,6 +6,17 @@ exports.generate = async (options) => {
 
   if (!apiKey) throw new Error("API Key is missing for the configured provider.");
 
+  const start_time = Date.now();
+  let resultObj = {
+    answer: "",
+    metrics: {
+      latency: 0,
+      promptTokens: 0,
+      completionTokens: 0,
+      totalTokens: 0
+    }
+  };
+
   if (provider === "gemini") {
     const genAI = new GoogleGenerativeAI(apiKey);
     
@@ -19,8 +30,6 @@ exports.generate = async (options) => {
       maxOutputTokens: maxTokens ? parseInt(maxTokens) : 500,
     };
 
-    // Format Messages to Gemini's expected contents array {role, parts}
-    // Ensures alternating structure and avoids consecutive roles.
     const contents = [];
     for (let m of messages) {
       const role = m.role === 'assistant' ? 'model' : 'user';
@@ -32,21 +41,30 @@ exports.generate = async (options) => {
     }
 
     const result = await geminiModel.generateContent({ contents, generationConfig });
+    
     if (!result.response || !result.response.text) {
         throw new Error("Invalid response received from Gemini SDK");
     }
-    return result.response.text();
+    
+    resultObj.answer = result.response.text();
+    resultObj.metrics.latency = Date.now() - start_time;
+    
+    if (result.response.usageMetadata) {
+       resultObj.metrics.promptTokens = result.response.usageMetadata.promptTokenCount || 0;
+       resultObj.metrics.completionTokens = result.response.usageMetadata.candidatesTokenCount || 0;
+       resultObj.metrics.totalTokens = result.response.usageMetadata.totalTokenCount || 0;
+    }
+
+    return resultObj;
 
   } else {
     // Default to OpenAI
     const openai = new OpenAI({ apiKey });
     
-    // Inject system prompt natively into the history array
     const openAIMessages = [
       { role: "system", content: systemPrompt || "You are a helpful assistant" }
     ];
 
-    // Combine consecutive identical roles just in case some OpenAI models are strict
     for (let m of messages) {
       const role = m.role;
       if (openAIMessages.length > 0 && openAIMessages[openAIMessages.length - 1].role === role) {
@@ -63,6 +81,15 @@ exports.generate = async (options) => {
       max_tokens: maxTokens ? parseInt(maxTokens) : 500
     });
 
-    return completion.choices[0].message.content;
+    resultObj.answer = completion.choices[0].message.content;
+    resultObj.metrics.latency = Date.now() - start_time;
+    
+    if (completion.usage) {
+       resultObj.metrics.promptTokens = completion.usage.prompt_tokens || 0;
+       resultObj.metrics.completionTokens = completion.usage.completion_tokens || 0;
+       resultObj.metrics.totalTokens = completion.usage.total_tokens || 0;
+    }
+
+    return resultObj;
   }
 };

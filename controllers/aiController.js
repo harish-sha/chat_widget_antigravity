@@ -13,7 +13,7 @@ exports.getSettings = (req, res) => {
 exports.updateSettings = (req, res) => {
   const { widgetId } = req.params;
   const { is_enabled, provider, api_key, system_prompt, tone, grammar_mode, model, temperature, max_tokens, fallback_message } = req.body;
-  
+
   const sql = `
     INSERT INTO widget_ai_settings 
       (widget_id, is_enabled, provider, api_key, system_prompt, tone, grammar_mode, model, temperature, max_tokens, fallback_message)
@@ -23,23 +23,23 @@ exports.updateSettings = (req, res) => {
   `;
 
   const values = [
-    widgetId, 
-    is_enabled || false, 
-    provider || 'openai', 
-    api_key || null, 
-    system_prompt || null, 
-    tone || 'professional', 
+    widgetId,
+    is_enabled || false,
+    provider || 'openai',
+    api_key || null,
+    system_prompt || null,
+    tone || 'professional',
     grammar_mode || false,
     model || 'gpt-3.5-turbo',
     temperature ?? 0.70,
     max_tokens || 500,
     fallback_message || null,
-    
-    is_enabled || false, 
-    provider || 'openai', 
-    api_key || null, 
-    system_prompt || null, 
-    tone || 'professional', 
+
+    is_enabled || false,
+    provider || 'openai',
+    api_key || null,
+    system_prompt || null,
+    tone || 'professional',
     grammar_mode || false,
     model || 'gpt-3.5-turbo',
     temperature ?? 0.70,
@@ -124,7 +124,7 @@ const OpenAI = require("openai");
 exports.agentAssist = (req, res) => {
   const { widgetId } = req.params;
   const { question, context_instruction } = req.body;
-  
+
   if (!question) return res.status(400).json({ error: "Question parameter missing" });
 
   const settingsSql = `SELECT * FROM widget_ai_settings WHERE widget_id = ?`;
@@ -152,7 +152,7 @@ exports.agentAssist = (req, res) => {
 
       try {
         const aiService = require("../services/aiService");
-        const answer = await aiService.generate({
+        const botResponse = await aiService.generate({
           provider: settings.provider,
           apiKey: settings.api_key,
           model: settings.model,
@@ -162,8 +162,26 @@ exports.agentAssist = (req, res) => {
           messages: messages
         });
 
-        res.json({ success: true, answer: answer });
+        const logSql = `
+           INSERT INTO ai_metrics_log 
+             (widget_id, conversation_id, provider, model, temperature, latency_ms, prompt_tokens, completion_tokens, total_tokens, is_fallback)
+           VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, 0)
+         `;
+         db.query(logSql, [
+           widgetId, settings.provider || 'openai', settings.model || 'gpt-3.5-turbo', settings.temperature ?? 0.7,
+           botResponse.metrics.latency, botResponse.metrics.promptTokens, botResponse.metrics.completionTokens, botResponse.metrics.totalTokens
+         ]);
+
+        res.json({ success: true, answer: botResponse.answer });
       } catch (e) {
+         const logErrSql = `
+             INSERT INTO ai_metrics_log 
+               (widget_id, conversation_id, provider, model, temperature, latency_ms, is_fallback, error_message)
+             VALUES (?, NULL, ?, ?, ?, 0, 1, ?)
+          `;
+          db.query(logErrSql, [
+             widgetId, settings.provider || 'openai', settings.model || 'gpt-3.5-turbo', settings.temperature ?? 0.7, e.message
+          ]);
         res.status(500).json({ error: e.message });
       }
     });

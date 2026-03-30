@@ -20,6 +20,9 @@ app.use("/form", formRoutes);
 app.use("/conversation", conversationRoutes);
 app.use("/conversations", conversationRoutes); // For paths like /conversations/:widgetId
 app.use("/messages", messageRoutes);
+
+const aiMetricsRoutes = require("./routes/aiMetricsRoutes");
+app.use("/ai/metrics", aiMetricsRoutes);
 app.use("/ai", aiRoutes);
 
 app.listen(8000, () => {
