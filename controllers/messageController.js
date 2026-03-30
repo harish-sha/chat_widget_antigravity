@@ -60,7 +60,7 @@ async function triggerAIResponse(conversationId, widgetId, userMessage) {
 
         try {
           const aiService = require("../services/aiService");
-          const botReply = await aiService.generate({
+          const botResponse = await aiService.generate({
             provider: settings.provider,
             apiKey: settings.api_key,
             model: settings.model,
@@ -70,12 +70,23 @@ async function triggerAIResponse(conversationId, widgetId, userMessage) {
             messages: messages
           });
           
-          if (botReply) {
+          if (botResponse && botResponse.answer) {
              const insertReplySql = `
               INSERT INTO messages (conversation_id, sender, message, message_type)
               VALUES (?, 'bot', ?, 'text')
              `;
-             db.query(insertReplySql, [conversationId, botReply]);
+             db.query(insertReplySql, [conversationId, botResponse.answer]);
+             
+             const logSql = `
+               INSERT INTO ai_metrics_log 
+                 (widget_id, conversation_id, provider, model, temperature, latency_ms, prompt_tokens, completion_tokens, total_tokens, is_fallback)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+             `;
+             db.query(logSql, [
+               widgetId, conversationId, 
+               settings.provider || 'openai', settings.model || 'gpt-3.5-turbo', settings.temperature ?? 0.7,
+               botResponse.metrics.latency, botResponse.metrics.promptTokens, botResponse.metrics.completionTokens, botResponse.metrics.totalTokens
+             ]);
           }
 
         } catch (e) {
@@ -83,6 +94,17 @@ async function triggerAIResponse(conversationId, widgetId, userMessage) {
           const fallback = settings.fallback_message || `AI failed to respond: ${e.message}`;
           const errSql = `INSERT INTO messages (conversation_id, sender, message, message_type) VALUES (?, 'system', ?, 'system')`;
           db.query(errSql, [conversationId, fallback]);
+          
+          const logErrSql = `
+             INSERT INTO ai_metrics_log 
+               (widget_id, conversation_id, provider, model, temperature, latency_ms, is_fallback, error_message)
+             VALUES (?, ?, ?, ?, ?, 0, 1, ?)
+          `;
+          db.query(logErrSql, [
+             widgetId, conversationId, 
+             settings.provider || 'openai', settings.model || 'gpt-3.5-turbo', settings.temperature ?? 0.7,
+             e.message
+          ]);
         }
       });
     });
