@@ -3,7 +3,8 @@ const router = express.Router();
 const aiController = require("../controllers/aiController");
 
 router.get("/settings/:widgetId", aiController.getSettings);
-router.post("/settings/:widgetId", aiController.updateSettings);
+router.put("/admin/settings/:widgetId", aiController.updateAdminSettings);
+router.put("/agent/settings/:widgetId", aiController.updateAgentSettings);
 
 router.get("/knowledge/:widgetId", aiController.getKnowledge);
 router.post("/knowledge/:widgetId", aiController.addKnowledge);

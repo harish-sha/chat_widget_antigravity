@@ -3,13 +3,13 @@ const OpenAI = require("openai");
 
 async function triggerAIResponse(conversationId, widgetId, userMessage) {
   const settingsSql = `SELECT * FROM widget_ai_settings WHERE widget_id = ? AND is_enabled = TRUE`;
-  
+
   db.query(settingsSql, [widgetId], (err, settingsResult) => {
     if (err || !settingsResult.length) return;
-    
+
     const settings = settingsResult[0];
     if (!settings.api_key) return;
-    
+
     const kbSql = `SELECT content FROM ai_knowledge_base WHERE widget_id = ? AND status = 'active'`;
     db.query(kbSql, [widgetId], async (err, kbResult) => {
       let kbContext = "";
@@ -26,7 +26,7 @@ async function triggerAIResponse(conversationId, widgetId, userMessage) {
         ) sub
         ORDER BY created_at ASC
       `;
-      
+
       db.query(historySql, [conversationId], async (err, historyResult) => {
         if (err) return;
 
@@ -37,11 +37,11 @@ async function triggerAIResponse(conversationId, widgetId, userMessage) {
         if (kbContext) {
           sysPrompt += `\n\nUse the following verified knowledge context to answer questions:\n${kbContext}`;
         }
-        
+
         for (let msg of historyResult) {
           if (msg.message && typeof msg.message === 'string') {
             const role = (msg.sender === 'bot' || msg.sender === 'agent') ? 'assistant' : 'user';
-            
+
             if (messages.length > 0 && messages[messages.length - 1].role === role) {
               messages[messages.length - 1].content += "\n" + msg.message;
             } else {
@@ -49,7 +49,7 @@ async function triggerAIResponse(conversationId, widgetId, userMessage) {
             }
           }
         }
-        
+
         if (messages.length === 0 || messages[messages.length - 1].content !== userMessage) {
           if (messages.length > 0 && messages[messages.length - 1].role === "user") {
             messages[messages.length - 1].content += "\n" + userMessage;
@@ -69,24 +69,24 @@ async function triggerAIResponse(conversationId, widgetId, userMessage) {
             systemPrompt: sysPrompt,
             messages: messages
           });
-          
+
           if (botResponse && botResponse.answer) {
-             const insertReplySql = `
+            const insertReplySql = `
               INSERT INTO messages (conversation_id, sender, message, message_type)
               VALUES (?, 'bot', ?, 'text')
              `;
-             db.query(insertReplySql, [conversationId, botResponse.answer]);
-             
-             const logSql = `
+            db.query(insertReplySql, [conversationId, botResponse.answer]);
+
+            const logSql = `
                INSERT INTO ai_metrics_log 
                  (widget_id, conversation_id, provider, model, temperature, latency_ms, prompt_tokens, completion_tokens, total_tokens, is_fallback)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
              `;
-             db.query(logSql, [
-               widgetId, conversationId, 
-               settings.provider || 'openai', settings.model || 'gpt-3.5-turbo', settings.temperature ?? 0.7,
-               botResponse.metrics.latency, botResponse.metrics.promptTokens, botResponse.metrics.completionTokens, botResponse.metrics.totalTokens
-             ]);
+            db.query(logSql, [
+              widgetId, conversationId,
+              settings.provider || 'openai', settings.model || 'gpt-3.5-turbo', settings.temperature ?? 0.7,
+              botResponse.metrics.latency, botResponse.metrics.promptTokens, botResponse.metrics.completionTokens, botResponse.metrics.totalTokens
+            ]);
           }
 
         } catch (e) {
@@ -94,16 +94,16 @@ async function triggerAIResponse(conversationId, widgetId, userMessage) {
           const fallback = settings.fallback_message || `AI failed to respond: ${e.message}`;
           const errSql = `INSERT INTO messages (conversation_id, sender, message, message_type) VALUES (?, 'system', ?, 'system')`;
           db.query(errSql, [conversationId, fallback]);
-          
+
           const logErrSql = `
              INSERT INTO ai_metrics_log 
                (widget_id, conversation_id, provider, model, temperature, latency_ms, is_fallback, error_message)
              VALUES (?, ?, ?, ?, ?, 0, 1, ?)
           `;
           db.query(logErrSql, [
-             widgetId, conversationId, 
-             settings.provider || 'openai', settings.model || 'gpt-3.5-turbo', settings.temperature ?? 0.7,
-             e.message
+            widgetId, conversationId,
+            settings.provider || 'openai', settings.model || 'gpt-3.5-turbo', settings.temperature ?? 0.7,
+            e.message
           ]);
         }
       });
@@ -132,12 +132,12 @@ exports.sendMessage = (req, res) => {
       if (sender === "user" && messageType === "text" && message) {
         const convSql = `SELECT widget_id, bot_active FROM conversations WHERE id = ?`;
         db.query(convSql, [conversationId], (err, convResult) => {
-           if (!err && convResult.length > 0) {
-             const { widget_id, bot_active } = convResult[0];
-             if (bot_active) {
-                triggerAIResponse(conversationId, widget_id, message);
-             }
-           }
+          if (!err && convResult.length > 0) {
+            const { widget_id, bot_active } = convResult[0];
+            if (bot_active) {
+              triggerAIResponse(conversationId, widget_id, message);
+            }
+          }
         });
       }
 
@@ -200,15 +200,37 @@ exports.getMessages = (req, res) => {
 exports.syncMessages = (req, res) => {
   const { conversationId } = req.params;
   const afterId = Number(req.query.afterId) || 0;
+  const page = Number(req.query.page) || 1;
+  const limit = Number(req.query.limit) || 100;
+  const offset = (page - 1) * limit;
 
-  const sql = `
-    SELECT * FROM messages 
-    WHERE conversation_id = ? AND id > ? 
-    ORDER BY created_at ASC
-  `;
+  const countSql = `SELECT COUNT(*) AS total FROM messages WHERE conversation_id = ? AND id > ?`;
 
-  db.query(sql, [conversationId, afterId], (err, results) => {
+  db.query(countSql, [conversationId, afterId], (err, countResult) => {
     if (err) return res.status(500).json({ error: err });
-    res.json({ success: true, count: results.length, messages: results });
+
+    const total = countResult[0].total;
+    const sql = `
+      SELECT * FROM messages 
+      WHERE conversation_id = ? AND id > ? 
+      ORDER BY created_at ASC
+      LIMIT ? OFFSET ?
+    `;
+
+    db.query(sql, [conversationId, afterId, limit, offset], (err, results) => {
+      if (err) return res.status(500).json({ error: err });
+
+      res.json({
+        success: true,
+        page,
+        limit,
+        count: results.length,
+        total,
+        totalPages: Math.ceil(total / limit),
+        hasNextPage: page * limit < total,
+        hasPrevPage: page > 1,
+        messages: results
+      });
+    });
   });
 };

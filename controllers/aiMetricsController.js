@@ -101,3 +101,35 @@ exports.getMetricsLogs = (req, res) => {
     });
   });
 };
+
+exports.getAdminReports = (req, res) => {
+  const sql = `
+    SELECT 
+      widget_id,
+      COUNT(*) as total_requests,
+      SUM(total_tokens) as total_tokens_billed,
+      SUM(prompt_tokens) as total_prompt_tokens,
+      SUM(completion_tokens) as total_completion_tokens,
+      AVG(latency_ms) as avg_latency_ms,
+      SUM(CASE WHEN is_fallback = TRUE THEN 1 ELSE 0 END) as total_errors
+    FROM ai_metrics_log
+    GROUP BY widget_id
+    ORDER BY total_tokens_billed DESC
+  `;
+
+  db.query(sql, (err, results) => {
+    if (err) return res.status(500).json({ error: err.message });
+    
+    const globalStats = results.reduce((acc, row) => {
+       acc.system_requests += Number(row.total_requests);
+       acc.system_tokens += Number(row.total_tokens_billed);
+       return acc;
+    }, { system_requests: 0, system_tokens: 0 });
+
+    res.json({
+      success: true,
+      globalOverview: globalStats,
+      widgetBreakdown: results
+    });
+  });
+};

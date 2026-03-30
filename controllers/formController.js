@@ -53,7 +53,7 @@ exports.getSubmissionsByVersion = (req, res) => {
   const page = Number(req.query.page) || 1;
   const limit = Number(req.query.limit) || 10;
   const offset = (page - 1) * limit;
-  const { fromDate, toDate, device } = req.query;
+  const { fromDate, toDate, device, conversationId } = req.query;
 
   let whereClause = `WHERE widget_id = ? AND form_version = ?`;
   const params = [widgetId, version];
@@ -69,6 +69,10 @@ exports.getSubmissionsByVersion = (req, res) => {
   if (device) {
     whereClause += ` AND JSON_UNQUOTE(JSON_EXTRACT(meta, '$.device')) = ?`;
     params.push(device);
+  }
+  if (conversationId) {
+    whereClause += ` AND conversation_id = ?`;
+    params.push(conversationId);
   }
 
   const countSql = `SELECT COUNT(*) AS total FROM form_submissions ${whereClause}`;
@@ -94,10 +98,49 @@ exports.getSubmissionsByVersion = (req, res) => {
 
 exports.getAllSubmissions = (req, res) => {
   const { widgetId } = req.params;
-  const sql = `SELECT * FROM form_submissions WHERE widget_id = ? ORDER BY created_at DESC`;
-  db.query(sql, [widgetId], (err, result) => {
+  const page = Number(req.query.page) || 1;
+  const limit = Number(req.query.limit) || 10;
+  const offset = (page - 1) * limit;
+  const { fromDate, toDate, device, conversationId } = req.query;
+
+  let whereClause = `WHERE widget_id = ?`;
+  const params = [widgetId];
+
+  if (fromDate) {
+    whereClause += ` AND created_at >= ?`;
+    params.push(fromDate);
+  }
+  if (toDate) {
+    whereClause += ` AND created_at <= ?`;
+    params.push(toDate);
+  }
+  if (device) {
+    whereClause += ` AND JSON_UNQUOTE(JSON_EXTRACT(meta, '$.device')) = ?`;
+    params.push(device);
+  }
+  if (conversationId) {
+    whereClause += ` AND conversation_id = ?`;
+    params.push(conversationId);
+  }
+
+  const countSql = `SELECT COUNT(*) AS total FROM form_submissions ${whereClause}`;
+
+  db.query(countSql, params, (err, countResult) => {
     if (err) return res.status(500).json({ error: err });
-    res.json({ submissions: result });
+
+    const total = countResult[0].total;
+    const sql = `
+      SELECT id, answers, meta, session_id, conversation_id, created_at
+      FROM form_submissions
+      ${whereClause}
+      ORDER BY created_at DESC
+      LIMIT ? OFFSET ?
+    `;
+
+    db.query(sql, [...params, limit, offset], (err, submissions) => {
+      if (err) return res.status(500).json({ error: err });
+      res.json({ page, limit, count: submissions.length, total, submissions });
+    });
   });
 };
 
