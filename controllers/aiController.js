@@ -12,14 +12,14 @@ exports.getSettings = (req, res) => {
 
 exports.updateAdminSettings = (req, res) => {
   const { widgetId } = req.params;
-  const { provider, api_key, model, temperature, max_tokens, fallback_message } = req.body;
+  const { provider, api_key, model, temperature, max_tokens } = req.body;
 
   const sql = `
     INSERT INTO widget_ai_settings 
-      (widget_id, provider, api_key, model, temperature, max_tokens, fallback_message)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+      (widget_id, provider, api_key, model, temperature, max_tokens)
+    VALUES (?, ?, ?, ?, ?, ?)
     ON DUPLICATE KEY UPDATE 
-      provider = ?, api_key = ?, model = ?, temperature = ?, max_tokens = ?, fallback_message = ?
+      provider = ?, api_key = ?, model = ?, temperature = ?, max_tokens = ?
   `;
 
   const values = [
@@ -29,14 +29,12 @@ exports.updateAdminSettings = (req, res) => {
     model || 'gpt-3.5-turbo',
     temperature ?? 0.70,
     max_tokens || 500,
-    fallback_message || null,
 
     provider || 'openai',
     api_key || null,
     model || 'gpt-3.5-turbo',
     temperature ?? 0.70,
-    max_tokens || 500,
-    fallback_message || null
+    max_tokens || 500
   ];
 
   db.query(sql, values, (err) => {
@@ -47,14 +45,14 @@ exports.updateAdminSettings = (req, res) => {
 
 exports.updateAgentSettings = (req, res) => {
   const { widgetId } = req.params;
-  const { is_enabled, system_prompt, tone, grammar_mode } = req.body;
+  const { is_enabled, system_prompt, tone, grammar_mode, fallback_message } = req.body;
 
   const sql = `
     INSERT INTO widget_ai_settings 
-      (widget_id, is_enabled, system_prompt, tone, grammar_mode)
-    VALUES (?, ?, ?, ?, ?)
+      (widget_id, is_enabled, system_prompt, tone, grammar_mode, fallback_message)
+    VALUES (?, ?, ?, ?, ?, ?)
     ON DUPLICATE KEY UPDATE 
-      is_enabled = ?, system_prompt = ?, tone = ?, grammar_mode = ?
+      is_enabled = ?, system_prompt = ?, tone = ?, grammar_mode = ?, fallback_message = ?
   `;
 
   const values = [
@@ -63,11 +61,13 @@ exports.updateAgentSettings = (req, res) => {
     system_prompt || null,
     tone || 'professional',
     grammar_mode || false,
+    fallback_message || null,
 
     is_enabled || false,
     system_prompt || null,
     tone || 'professional',
-    grammar_mode || false
+    grammar_mode || false,
+    fallback_message || null
   ];
 
   db.query(sql, values, (err) => {
@@ -146,7 +146,7 @@ const OpenAI = require("openai");
 
 exports.agentAssist = (req, res) => {
   const { widgetId } = req.params;
-  const { question, context_instruction } = req.body;
+  const { question, context_instruction, response_type, language, tone } = req.body;
 
   if (!question) return res.status(400).json({ error: "Question parameter missing" });
 
@@ -167,8 +167,19 @@ exports.agentAssist = (req, res) => {
       }
 
       const messages = [];
-      let sysPrompt = "You are an internal AI assistant helping a human agent. Do not address an external user.";
+      let sysPrompt = "You are an internal AI assistant helping a human agent craft responses. Do not address an external user.";
+
       if (context_instruction) sysPrompt += `\nSpecial instructions: ${context_instruction}`;
+
+      if (response_type) {
+        sysPrompt += `\nResponse Format: The output MUST be strictly formatted as a ${response_type}.`;
+        sysPrompt += `\nSTRICT RULE: You are talking to a human agent, not a computer. DO NOT output JSON payloads, API schemas, or markdown code blocks unless explicitly requested. Provide conversational plain-text only.`;
+      }
+      if (language) sysPrompt += `\nLanguage: The output MUST be strictly written in ${language}.`;
+
+      const finalTone = tone || settings.tone || 'professional';
+      sysPrompt += `\nTone: Your response should be strongly written in a ${finalTone} tone.`;
+
       if (kbContext) sysPrompt += `\n\nVerified Knowledge Context:\n${kbContext}`;
 
       messages.push({ role: "user", content: question });
@@ -190,21 +201,21 @@ exports.agentAssist = (req, res) => {
              (widget_id, conversation_id, provider, model, temperature, latency_ms, prompt_tokens, completion_tokens, total_tokens, is_fallback)
            VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, 0)
          `;
-         db.query(logSql, [
-           widgetId, settings.provider || 'openai', settings.model || 'gpt-3.5-turbo', settings.temperature ?? 0.7,
-           botResponse.metrics.latency, botResponse.metrics.promptTokens, botResponse.metrics.completionTokens, botResponse.metrics.totalTokens
-         ]);
+        db.query(logSql, [
+          widgetId, settings.provider || 'openai', settings.model || 'gpt-3.5-turbo', settings.temperature ?? 0.7,
+          botResponse.metrics.latency, botResponse.metrics.promptTokens, botResponse.metrics.completionTokens, botResponse.metrics.totalTokens
+        ]);
 
         res.json({ success: true, answer: botResponse.answer });
       } catch (e) {
-         const logErrSql = `
+        const logErrSql = `
              INSERT INTO ai_metrics_log 
                (widget_id, conversation_id, provider, model, temperature, latency_ms, is_fallback, error_message)
              VALUES (?, NULL, ?, ?, ?, 0, 1, ?)
           `;
-          db.query(logErrSql, [
-             widgetId, settings.provider || 'openai', settings.model || 'gpt-3.5-turbo', settings.temperature ?? 0.7, e.message
-          ]);
+        db.query(logErrSql, [
+          widgetId, settings.provider || 'openai', settings.model || 'gpt-3.5-turbo', settings.temperature ?? 0.7, e.message
+        ]);
         res.status(500).json({ error: e.message });
       }
     });
