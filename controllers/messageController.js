@@ -220,16 +220,24 @@ exports.syncMessages = (req, res) => {
     db.query(sql, [conversationId, afterId, limit, offset], (err, results) => {
       if (err) return res.status(500).json({ error: err });
 
-      res.json({
-        success: true,
-        page,
-        limit,
-        count: results.length,
-        total,
-        totalPages: Math.ceil(total / limit),
-        hasNextPage: page * limit < total,
-        hasPrevPage: page > 1,
-        messages: results
+      const convSql = `SELECT bot_active FROM conversations WHERE id = ?`;
+      db.query(convSql, [conversationId], (err, convResult) => {
+        if (err) return res.status(500).json({ error: err });
+
+        const aiStatus = convResult.length > 0 ? !!convResult[0].bot_active : false;
+
+        res.json({
+          success: true,
+          aiStatus: aiStatus,
+          page,
+          limit,
+          count: results.length,
+          total,
+          totalPages: Math.ceil(total / limit),
+          hasNextPage: page * limit < total,
+          hasPrevPage: page > 1,
+          messages: results
+        });
       });
     });
   });
