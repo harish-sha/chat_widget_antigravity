@@ -120,17 +120,117 @@ exports.getKnowledge = (req, res) => {
   });
 };
 
-exports.addKnowledge = (req, res) => {
+const pdfParse = require("pdf-parse");
+const xlsx = require("xlsx");
+
+const chunkText = (text, maxLength = 1000) => {
+  const words = text.split(" ");
+  const chunks = [];
+  let currentChunk = "";
+  
+  for (let w of words) {
+    if ((currentChunk.length + w.length) > maxLength) {
+      chunks.push(currentChunk.trim());
+      currentChunk = w + " ";
+    } else {
+      currentChunk += w + " ";
+    }
+  }
+  if (currentChunk) chunks.push(currentChunk.trim());
+  return chunks;
+};
+
+exports.addKnowledge = async (req, res) => {
   const { widgetId } = req.params;
-  const { type, content } = req.body;
+  const { type } = req.body;
+  let textContent = req.body.content || "";
+  let fileName = null;
 
-  if (!content) return res.status(400).json({ error: "Content is required" });
+  try {
+    const settingsSql = `SELECT provider, api_key FROM widget_ai_settings WHERE widget_id = ?`;
+    db.query(settingsSql, [widgetId], async (err, settingsResult) => {
+      if (err) return res.status(500).json({ error: err.message });
+      const settings = settingsResult[0] || {};
+      
+      if (req.file) {
+        fileName = req.file.originalname;
+        if (req.file.mimetype === "application/pdf") {
+          const pdfData = await pdfParse(req.file.buffer);
+          textContent = pdfData.text;
+        } else if (req.file.mimetype.includes("spreadsheet") || fileName.endsWith(".xlsx") || fileName.endsWith(".csv")) {
+          const workbook = xlsx.read(req.file.buffer, { type: "buffer" });
+          textContent = xlsx.utils.sheet_to_csv(workbook.Sheets[workbook.SheetNames[0]]);
+        } else {
+          textContent = req.file.buffer.toString("utf8");
+        }
+      }
 
-  const sql = `INSERT INTO ai_knowledge_base (widget_id, type, content) VALUES (?, ?, ?)`;
-  db.query(sql, [widgetId, type || 'text', content], (err, result) => {
-    if (err) return res.status(500).json({ error: err });
-    res.json({ success: true, id: result.insertId });
-  });
+      if (!textContent || textContent.trim().length === 0) {
+        return res.status(400).json({ error: "No valid text content found to embed." });
+      }
+
+      const aiService = require("../services/aiService");
+      const chunks = chunkText(textContent, 1000);
+      let insertedIds = [];
+
+      for (const chunk of chunks) {
+         let embeddingStr = null;
+         if (settings.api_key) {
+           try {
+             const vector = await aiService.embedText(settings.provider, settings.api_key, chunk);
+             embeddingStr = JSON.stringify(vector);
+           } catch (e) {
+             console.error("Embedding generation failed for chunk", e.message);
+           }
+         }
+         
+         await new Promise((resolve, reject) => {
+           const sql = `INSERT INTO ai_knowledge_base (widget_id, type, content, embedding, file_name) VALUES (?, ?, ?, ?, ?)`;
+           db.query(sql, [widgetId, type || 'text', chunk, embeddingStr, fileName], (ierr, ires) => {
+             if (ierr) return reject(ierr);
+             insertedIds.push(ires.insertId);
+             resolve();
+           });
+         });
+      }
+
+      res.json({ success: true, message: `Stored ${chunks.length} vector chunks natively.`, ids: insertedIds });
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+};
+
+exports.updateKnowledge = async (req, res) => {
+  const { widgetId, id } = req.params;
+  const { content } = req.body;
+
+  try {
+    const settingsSql = `SELECT provider, api_key FROM widget_ai_settings WHERE widget_id = ?`;
+    db.query(settingsSql, [widgetId], async (err, settingsResult) => {
+      if (err) return res.status(500).json({ error: err.message });
+      const settings = settingsResult[0] || {};
+
+      let embeddingStr = null;
+      if (settings.api_key && content) {
+        const aiService = require("../services/aiService");
+        try {
+          const vector = await aiService.embedText(settings.provider, settings.api_key, content);
+          embeddingStr = JSON.stringify(vector);
+        } catch (e) {
+          console.error("Embedding generation failed", e.message);
+        }
+      }
+
+      const sql = `UPDATE ai_knowledge_base SET content = ?, embedding = ? WHERE id = ? AND widget_id = ?`;
+      db.query(sql, [content, embeddingStr, id, widgetId], (uerr) => {
+        if (uerr) return res.status(500).json({ error: uerr.message });
+        res.json({ success: true, message: "Knowledge embedded and updated natively!" });
+      });
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 };
 
 exports.deleteKnowledge = (req, res) => {
@@ -159,11 +259,37 @@ exports.agentAssist = (req, res) => {
 
     const settings = settingsResult[0];
 
-    const kbSql = `SELECT content FROM ai_knowledge_base WHERE widget_id = ? AND status = 'active'`;
+    const kbSql = `SELECT content, embedding FROM ai_knowledge_base WHERE widget_id = ? AND status = 'active'`;
     db.query(kbSql, [widgetId], async (kbErr, kbResult) => {
       let kbContext = "";
+      const aiService = require("../services/aiService");
+      
       if (!kbErr && kbResult.length) {
-        kbContext = kbResult.map(k => k.content).join("\n\n");
+        if (settings.api_key) {
+           try {
+             const vectorMath = require("../utils/vectorMath");
+             const qVector = await aiService.embedText(settings.provider, settings.api_key, question);
+             
+             const scored = kbResult.map(row => {
+               let score = 0;
+               if (row.embedding) {
+                  const rowVector = typeof row.embedding === 'string' ? JSON.parse(row.embedding) : row.embedding;
+                  score = vectorMath.cosineSimilarity(qVector, rowVector);
+               }
+               return { content: row.content, score };
+             });
+             
+             scored.sort((a, b) => b.score - a.score);
+             // Take top 3 most relevant chunks to drastically reduce tokens
+             kbContext = scored.slice(0, 3).map(s => s.content).join("\n\n");
+           } catch(e) {
+             console.error("Agent RAG Error: ", e.message);
+           }
+        }
+        // Fallback if embeddings fail
+        if (!kbContext) {
+           kbContext = kbResult.slice(0, 3).map(k => k.content).join("\n\n");
+        }
       }
 
       const messages = [];
