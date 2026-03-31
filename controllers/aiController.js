@@ -1,5 +1,17 @@
 const db = require("../db");
 
+exports.getAllSettings = (req, res) => {
+  const sql = `
+    SELECT widget_id, provider, model, temperature, max_tokens, 
+           fallback_message, is_enabled, system_prompt, tone, grammar_mode 
+    FROM widget_ai_settings
+  `;
+  db.query(sql, (err, results) => {
+    if (err) return res.status(500).json({ error: err });
+    res.json({ success: true, count: results.length, settings: results });
+  });
+};
+
 exports.getSettings = (req, res) => {
   const { widgetId } = req.params;
   const sql = `SELECT * FROM widget_ai_settings WHERE widget_id = ?`;
@@ -98,7 +110,8 @@ exports.getKnowledge = (req, res) => {
 
     const total = countResult[0].total;
     const sql = `
-      SELECT * FROM ai_knowledge_base
+      SELECT id, widget_id, type, content, status, created_at, file_name 
+      FROM ai_knowledge_base
       ${whereClause}
       ORDER BY created_at DESC
       LIMIT ? OFFSET ?
