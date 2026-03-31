@@ -93,3 +93,23 @@ exports.generate = async (options) => {
     return resultObj;
   }
 };
+
+exports.embedText = async (provider, apiKey, text) => {
+  if (!apiKey) throw new Error("API Key missing for Embeddings");
+  const cleanText = text.replace(/\n/g, " ").trim();
+
+  if (provider === "gemini") {
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({ model: "gemini-embedding-001" });
+    const result = await model.embedContent(cleanText);
+    return result.embedding.values;
+  } else {
+    // Default to OpenAI
+    const openai = new OpenAI({ apiKey });
+    const response = await openai.embeddings.create({
+      model: "text-embedding-3-small",
+      input: cleanText,
+    });
+    return response.data[0].embedding;
+  }
+};

@@ -10,11 +10,35 @@ async function triggerAIResponse(conversationId, widgetId, userMessage) {
     const settings = settingsResult[0];
     if (!settings.api_key) return;
 
-    const kbSql = `SELECT content FROM ai_knowledge_base WHERE widget_id = ? AND status = 'active'`;
+    const kbSql = `SELECT content, embedding FROM ai_knowledge_base WHERE widget_id = ? AND status = 'active'`;
     db.query(kbSql, [widgetId], async (err, kbResult) => {
       let kbContext = "";
-      if (!err && kbResult.length) {
-        kbContext = kbResult.map(k => k.content).join("\n\n");
+      if (!err && kbResult.length > 0) {
+        if (settings.api_key) {
+          try {
+            const aiService = require("../services/aiService");
+            const vectorMath = require("../utils/vectorMath");
+            const qVector = await aiService.embedText(settings.provider, settings.api_key, userMessage);
+
+            const scored = kbResult.map(row => {
+              let score = 0;
+              if (row.embedding) {
+                const rowVector = typeof row.embedding === 'string' ? JSON.parse(row.embedding) : row.embedding;
+                score = vectorMath.cosineSimilarity(qVector, rowVector);
+              }
+              return { content: row.content, score };
+            });
+
+            scored.sort((a, b) => b.score - a.score);
+            kbContext = scored.slice(0, 4).map(s => s.content).join("\n\n");
+          } catch (e) {
+            console.error("Bot RAG Error: ", e.message);
+          }
+        }
+
+        if (!kbContext) {
+          kbContext = kbResult.slice(0, 4).map(k => k.content).join("\n\n");
+        }
       }
 
       const historySql = `
