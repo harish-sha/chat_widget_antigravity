@@ -18,9 +18,9 @@ exports.getSettings = (req, res) => {
   db.query(sql, [widgetId], (err, result) => {
     if (err) return res.status(500).json({ error: err });
     if (!result.length) return res.json({ settings: null });
-    
+
     const settings = { ...result[0], api_key: null }; // Mask key for security
-    
+
     res.json({ settings });
   });
 };
@@ -143,7 +143,7 @@ const chunkText = (text, maxLength = 1000) => {
   const words = text.split(" ");
   const chunks = [];
   let currentChunk = "";
-  
+
   for (let w of words) {
     if ((currentChunk.length + w.length) > maxLength) {
       chunks.push(currentChunk.trim());
@@ -168,7 +168,7 @@ exports.addKnowledge = async (req, res) => {
     db.query(settingsSql, [widgetId], async (err, settingsResult) => {
       if (err) return res.status(500).json({ error: err.message });
       const settings = settingsResult[0] || {};
-      
+
       if (req.file) {
         fileName = req.file.originalname;
         if (req.file.mimetype === "application/pdf") {
@@ -191,24 +191,24 @@ exports.addKnowledge = async (req, res) => {
       let insertedIds = [];
 
       for (const chunk of chunks) {
-         let embeddingStr = null;
-         if (settings.api_key) {
-           try {
-             const vector = await aiService.embedText(settings.provider, settings.api_key, chunk);
-             embeddingStr = JSON.stringify(vector);
-           } catch (e) {
-             console.error("Embedding generation failed for chunk", e.message);
-           }
-         }
-         
-         await new Promise((resolve, reject) => {
-           const sql = `INSERT INTO ai_knowledge_base (widget_id, type, content, embedding, file_name) VALUES (?, ?, ?, ?, ?)`;
-           db.query(sql, [widgetId, type || 'text', chunk, embeddingStr, fileName], (ierr, ires) => {
-             if (ierr) return reject(ierr);
-             insertedIds.push(ires.insertId);
-             resolve();
-           });
-         });
+        let embeddingStr = null;
+        if (settings.api_key) {
+          try {
+            const vector = await aiService.embedText(settings.provider, settings.api_key, chunk);
+            embeddingStr = JSON.stringify(vector);
+          } catch (e) {
+            console.error("Embedding generation failed for chunk", e.message);
+          }
+        }
+
+        await new Promise((resolve, reject) => {
+          const sql = `INSERT INTO ai_knowledge_base (widget_id, type, content, embedding, file_name) VALUES (?, ?, ?, ?, ?)`;
+          db.query(sql, [widgetId, type || 'text', chunk, embeddingStr, fileName], (ierr, ires) => {
+            if (ierr) return reject(ierr);
+            insertedIds.push(ires.insertId);
+            resolve();
+          });
+        });
       }
 
       res.json({ success: true, message: `Stored ${chunks.length} vector chunks natively.`, ids: insertedIds });
@@ -281,32 +281,32 @@ exports.agentAssist = (req, res) => {
     db.query(kbSql, [widgetId], async (kbErr, kbResult) => {
       let kbContext = "";
       const aiService = require("../services/aiService");
-      
+
       if (!kbErr && kbResult.length) {
         if (settings.api_key) {
-           try {
-             const vectorMath = require("../utils/vectorMath");
-             const qVector = await aiService.embedText(settings.provider, settings.api_key, question);
-             
-             const scored = kbResult.map(row => {
-               let score = 0;
-               if (row.embedding) {
-                  const rowVector = typeof row.embedding === 'string' ? JSON.parse(row.embedding) : row.embedding;
-                  score = vectorMath.cosineSimilarity(qVector, rowVector);
-               }
-               return { content: row.content, score };
-             });
-             
-             scored.sort((a, b) => b.score - a.score);
-             // Take top 3 most relevant chunks to drastically reduce tokens
-             kbContext = scored.slice(0, 3).map(s => s.content).join("\n\n");
-           } catch(e) {
-             console.error("Agent RAG Error: ", e.message);
-           }
+          try {
+            const vectorMath = require("../utils/vectorMath");
+            const qVector = await aiService.embedText(settings.provider, settings.api_key, question);
+
+            const scored = kbResult.map(row => {
+              let score = 0;
+              if (row.embedding) {
+                const rowVector = typeof row.embedding === 'string' ? JSON.parse(row.embedding) : row.embedding;
+                score = vectorMath.cosineSimilarity(qVector, rowVector);
+              }
+              return { content: row.content, score };
+            });
+
+            scored.sort((a, b) => b.score - a.score);
+            // Take top 3 most relevant chunks to drastically reduce tokens
+            kbContext = scored.slice(0, 3).map(s => s.content).join("\n\n");
+          } catch (e) {
+            console.error("Agent RAG Error: ", e.message);
+          }
         }
         // Fallback if embeddings fail
         if (!kbContext) {
-           kbContext = kbResult.slice(0, 3).map(k => k.content).join("\n\n");
+          kbContext = kbResult.slice(0, 3).map(k => k.content).join("\n\n");
         }
       }
 
