@@ -22,7 +22,12 @@ app.use("/conversations", conversationRoutes); // For paths like /conversations/
 app.use("/messages", messageRoutes);
 
 const aiMetricsRoutes = require("./routes/aiMetricsRoutes");
+const convMetricsRoutes = require("./routes/conversationMetricsRoutes");
+const formMetricsRoutes = require("./routes/formMetricsRoutes");
+
 app.use("/ai/metrics", aiMetricsRoutes);
+app.use("/metrics/conversations", convMetricsRoutes);
+app.use("/metrics/forms", formMetricsRoutes);
 app.use("/ai", aiRoutes);
 
 app.listen(8000, () => {
