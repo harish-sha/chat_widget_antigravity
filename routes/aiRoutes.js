@@ -2,6 +2,7 @@ const express = require("express");
 const router = express.Router();
 const aiController = require("../controllers/aiController");
 
+router.get("/settings", aiController.getAllSettings);
 router.get("/settings/:widgetId", aiController.getSettings);
 router.put("/admin/settings/:widgetId", aiController.updateAdminSettings);
 router.put("/agent/settings/:widgetId", aiController.updateAgentSettings);
