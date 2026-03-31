@@ -18,7 +18,10 @@ exports.getSettings = (req, res) => {
   db.query(sql, [widgetId], (err, result) => {
     if (err) return res.status(500).json({ error: err });
     if (!result.length) return res.json({ settings: null });
-    res.json({ settings: result[0] });
+    
+    const settings = { ...result[0], api_key: null }; // Mask key for security
+    
+    res.json({ settings });
   });
 };
 
@@ -155,8 +158,9 @@ const chunkText = (text, maxLength = 1000) => {
 
 exports.addKnowledge = async (req, res) => {
   const { widgetId } = req.params;
-  const { type } = req.body;
-  let textContent = req.body.content || "";
+  const body = req.body || {};
+  const { type } = body;
+  let textContent = body.content || "";
   let fileName = null;
 
   try {
@@ -216,7 +220,8 @@ exports.addKnowledge = async (req, res) => {
 
 exports.updateKnowledge = async (req, res) => {
   const { widgetId, id } = req.params;
-  const { content } = req.body;
+  const body = req.body || {};
+  const { content } = body;
 
   try {
     const settingsSql = `SELECT provider, api_key FROM widget_ai_settings WHERE widget_id = ?`;
