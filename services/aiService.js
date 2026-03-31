@@ -19,7 +19,7 @@ exports.generate = async (options) => {
 
   if (provider === "gemini") {
     const genAI = new GoogleGenerativeAI(apiKey);
-    
+
     const geminiModel = genAI.getGenerativeModel({
       model: model || "gemini-1.5-flash",
       systemInstruction: systemPrompt || "You are a helpful assistant"
@@ -41,18 +41,18 @@ exports.generate = async (options) => {
     }
 
     const result = await geminiModel.generateContent({ contents, generationConfig });
-    
+
     if (!result.response || !result.response.text) {
-        throw new Error("Invalid response received from Gemini SDK");
+      throw new Error("Invalid response received from Gemini SDK");
     }
-    
+
     resultObj.answer = result.response.text();
     resultObj.metrics.latency = Date.now() - start_time;
-    
+
     if (result.response.usageMetadata) {
-       resultObj.metrics.promptTokens = result.response.usageMetadata.promptTokenCount || 0;
-       resultObj.metrics.completionTokens = result.response.usageMetadata.candidatesTokenCount || 0;
-       resultObj.metrics.totalTokens = result.response.usageMetadata.totalTokenCount || 0;
+      resultObj.metrics.promptTokens = result.response.usageMetadata.promptTokenCount || 0;
+      resultObj.metrics.completionTokens = result.response.usageMetadata.candidatesTokenCount || 0;
+      resultObj.metrics.totalTokens = result.response.usageMetadata.totalTokenCount || 0;
     }
 
     return resultObj;
@@ -60,7 +60,7 @@ exports.generate = async (options) => {
   } else {
     // Default to OpenAI
     const openai = new OpenAI({ apiKey });
-    
+
     const openAIMessages = [
       { role: "system", content: systemPrompt || "You are a helpful assistant" }
     ];
@@ -83,11 +83,11 @@ exports.generate = async (options) => {
 
     resultObj.answer = completion.choices[0].message.content;
     resultObj.metrics.latency = Date.now() - start_time;
-    
+
     if (completion.usage) {
-       resultObj.metrics.promptTokens = completion.usage.prompt_tokens || 0;
-       resultObj.metrics.completionTokens = completion.usage.completion_tokens || 0;
-       resultObj.metrics.totalTokens = completion.usage.total_tokens || 0;
+      resultObj.metrics.promptTokens = completion.usage.prompt_tokens || 0;
+      resultObj.metrics.completionTokens = completion.usage.completion_tokens || 0;
+      resultObj.metrics.totalTokens = completion.usage.total_tokens || 0;
     }
 
     return resultObj;
@@ -97,6 +97,7 @@ exports.generate = async (options) => {
 exports.embedText = async (provider, apiKey, text) => {
   if (!apiKey) throw new Error("API Key missing for Embeddings");
   const cleanText = text.replace(/\n/g, " ").trim();
+  if (!cleanText || cleanText.length === 0) throw new Error("Text is empty; skipping embedding injection.");
 
   if (provider === "gemini") {
     const genAI = new GoogleGenerativeAI(apiKey);
