@@ -11,6 +11,10 @@ const aiRoutes = require("./routes/aiRoutes");
 const app = express();
 
 app.use(cors());
+
+// STRIPE INJECTION: The Raw Webhook MUST be mapped physically before express.json() converts the Buffer bytes!
+app.use("/webhooks/stripe", express.raw({ type: 'application/json' }), require("./routes/stripeWebhook"));
+
 app.use(express.json());
 app.use(express.static("public"));
 
@@ -30,6 +34,7 @@ const authRoutes = require("./routes/authRoutes");
 const userRoutes = require("./routes/userRoutes");
 const adminRoutes = require("./routes/adminRoutes");
 const notificationRoutes = require("./routes/notificationRoutes");
+const subscriptionRoutes = require("./routes/subscriptionRoutes");
 
 app.use("/ai/metrics", aiMetricsRoutes);
 app.use("/metrics/conversations", convMetricsRoutes);
@@ -39,6 +44,7 @@ app.use("/auth", authRoutes);
 app.use("/user", userRoutes);
 app.use("/admin", adminRoutes);
 app.use("/notifications", notificationRoutes);
+app.use("/subscription", subscriptionRoutes);
 
 app.use("/ai", aiRoutes);
 
