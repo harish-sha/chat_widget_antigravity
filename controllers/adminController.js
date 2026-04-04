@@ -3,24 +3,46 @@ const db = require("../db");
 // Gets the list of all registered tenants/users
 exports.getAllUsers = (req, res) => {
   const { status } = req.query; // active vs inactive
+  const page = Number(req.query.page) || 1;
+  const limit = Number(req.query.limit) || 20;
+  const offset = (page - 1) * limit;
   
-  let sql = `
-    SELECT id, name, email, google_id as oauthLink, role, widget_id, is_active, created_at 
-    FROM users 
-    WHERE role != 'admin'
-  `;
+  let whereClause = `WHERE role != 'admin'`;
   const params = [];
 
   if (status) {
-    sql += ` AND is_active = ?`;
+    whereClause += ` AND is_active = ?`;
     params.push(status === 'active' ? true : false);
   }
   
-  sql += ` ORDER BY created_at DESC`;
+  const countSql = `SELECT COUNT(*) AS total FROM users ${whereClause}`;
 
-  db.query(sql, params, (err, results) => {
+  db.query(countSql, params, (err, countResult) => {
     if (err) return res.status(500).json({ error: err.message });
-    res.json({ success: true, count: results.length, users: results });
+    
+    const total = countResult[0].total;
+    const sql = `
+      SELECT id, name, email, google_id as oauthLink, role, widget_id, is_active, created_at 
+      FROM users 
+      ${whereClause}
+      ORDER BY created_at DESC
+      LIMIT ? OFFSET ?
+    `;
+
+    db.query(sql, [...params, limit, offset], (err, results) => {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json({ 
+        success: true, 
+        page,
+        limit,
+        count: results.length,
+        total,
+        totalPages: Math.ceil(total / limit),
+        hasNextPage: page * limit < total,
+        hasPrevPage: page > 1,
+        users: results 
+      });
+    });
   });
 };
 

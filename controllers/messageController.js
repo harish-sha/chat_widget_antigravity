@@ -118,6 +118,10 @@ async function triggerAIResponse(conversationId, widgetId, userMessage) {
           const fallback = settings.fallback_message || `AI failed to respond: ${e.message}`;
           const errSql = `INSERT INTO messages (conversation_id, sender, message, message_type) VALUES (?, 'system', ?, 'system')`;
           db.query(errSql, [conversationId, fallback]);
+          
+          // Physically trigger the master Alert Dispatcher
+          const alertDispatcher = require("../services/alertDispatcher");
+          alertDispatcher.fire(widgetId, "ai_handover_request", { reason: e.message, conversationId });
 
           const logErrSql = `
              INSERT INTO ai_metrics_log 
@@ -161,6 +165,10 @@ exports.sendMessage = (req, res) => {
             if (bot_active) {
               triggerAIResponse(conversationId, widget_id, message);
             }
+            
+            // Physically trigger the master Alert Dispatcher
+            const alertDispatcher = require("../services/alertDispatcher");
+            alertDispatcher.fire(widget_id, "new_inbound_message", { message, conversationId, sender });
           }
         });
       }
