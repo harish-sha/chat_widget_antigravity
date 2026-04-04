@@ -31,6 +31,10 @@ exports.submitForm = (req, res) => {
       (err) => {
         if (err) return res.status(500).json({ error: err });
 
+        // Physically trigger the master Alert Dispatcher
+        const alertDispatcher = require("../services/alertDispatcher");
+        alertDispatcher.fire(widgetId, "new_lead_/_form_submission", { answers, conversationId });
+
         if (conversationId) {
           const messageSql = `
             INSERT INTO messages (conversation_id, sender, message, message_type)
