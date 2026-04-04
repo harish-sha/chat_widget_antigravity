@@ -97,3 +97,25 @@ exports.setDefaultProvider = (req, res) => {
      });
   });
 };
+
+exports.testSmtpConnection = async (req, res) => {
+  const { testEmail } = req.body;
+  
+  if (!testEmail) return res.status(400).json({ error: "Please provide a testEmail target." });
+
+  try {
+     const emailService = require("../services/emailService");
+     const htmlFormat = `
+        <div style="font-family: sans-serif; padding: 20px;">
+           <h2 style="color: #2e6c80;">Custom SMTP Configuration Successful!</h2>
+           <p>If you are reading this email, it means your private Nodemailer configuration completely bypassed the server barriers and physically routed through your custom host.</p>
+           <p>Your SaaS environment is fully secured!</p>
+        </div>
+     `;
+     
+     await emailService.sendSystemEmail(testEmail, "SaaS Platform: Custom SMTP Verified", htmlFormat);
+     res.json({ success: true, message: "Custom SMTP hit successfully! Check your inbox." });
+  } catch (e) {
+     res.status(500).json({ error: "Custom SMTP Connection Refused", details: e.message });
+  }
+};

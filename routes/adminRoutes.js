@@ -15,5 +15,6 @@ router.delete("/users/:id", adminController.deleteUser);
 router.post("/channels/providers", adminController.addProvider);
 router.get("/channels/providers", adminController.getProviders);
 router.put("/channels/providers/:id/default", adminController.setDefaultProvider);
+router.post("/channels/test-email", adminController.testSmtpConnection);
 
 module.exports = router;
