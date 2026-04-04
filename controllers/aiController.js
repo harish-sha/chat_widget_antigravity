@@ -365,3 +365,104 @@ exports.agentAssist = (req, res) => {
     });
   });
 };
+
+
+// ok and now we move forward to the admin architextrures and the notifications management
+
+// here now we need more advanced routes for the admin and the users like - user will signup through - google oauth as and also - gmail and password and we check the duplicate email also and we generate a unique id which we use as widgetid or else some uniquenies and user will preview his profile and also update profile like mail, password , profile picture and some other fields and along 
+
+// and as per admin admin can see there all users, active users it can update the users active and inactive like they can loggin or not and also view there profiles and other reports we create early and some other things and can delete the user also and view there unqiue id also 
+
+// and now there is a notification section management where the registered user email of the user will receive the emails and whatsapp also so i create a payload which user will save the notification setting and there post and get apis and update and along multiple forwarding mail and much more features and admin can setup the notification setting and whatsapp managements and along the email configuration from the admin side so create that apis also and also a panel notification api also where user will see the notification inside panel as well and mark as read so create these architecutre completely proper
+
+// {
+//     "engineConfig": {
+//         "smartBatching": true,
+//         "batchIntervalSeconds": 30,
+//         "quietHours": {
+//             "enabled": false,
+//             "schedule": "22:00-08:00",
+//             "timezone": "UTC"
+//         }
+//     },
+//     "routingMatrix": [
+//         {
+//             "eventId": 1,
+//             "eventKey": "new_inbound_message",
+//             "channels": {
+//                 "email": true,
+//                 "web": true,
+//                 "whatsapp": true
+//             },
+//             "alertTone": "Standard"
+//         },
+//         {
+//             "eventId": 2,
+//             "eventKey": "ai_handover_request",
+//             "channels": {
+//                 "email": true,
+//                 "web": true,
+//                 "whatsapp": true
+//             },
+//             "alertTone": "High Alert"
+//         },
+//         {
+//             "eventId": 3,
+//             "eventKey": "sla_warning_(breach)",
+//             "channels": {
+//                 "email": true,
+//                 "web": true,
+//                 "whatsapp": true
+//             },
+//             "alertTone": "Urgent"
+//         },
+//         {
+//             "eventId": 4,
+//             "eventKey": "new_lead_/_form_submission",
+//             "channels": {
+//                 "email": true,
+//                 "web": false,
+//                 "whatsapp": true
+//             },
+//             "alertTone": "Pop"
+//         },
+//         {
+//             "eventId": 5,
+//             "eventKey": "internal_team_@mention",
+//             "channels": {
+//                 "email": true,
+//                 "web": true,
+//                 "whatsapp": false
+//             },
+//             "alertTone": "Chime"
+//         },
+//         {
+//             "eventId": 6,
+//             "eventKey": "system_service_alert",
+//             "channels": {
+//                 "email": true,
+//                 "web": true,
+//                 "whatsapp": false
+//             },
+//             "alertTone": "Standard"
+//         },
+//         {
+//             "eventId": 7,
+//             "eventKey": "weekly_analytics_digest",
+//             "channels": {
+//                 "email": true,
+//                 "web": false,
+//                 "whatsapp": false
+//             },
+//             "alertTone": "None"
+//         }
+//     ],
+//     "dispatchTargets": {
+//         "emails": [
+//             "admin@company.com"
+//         ],
+//         "whatsappNumbers": [
+//             "+91 98765 43210"
+//         ]
+//     }
+// }
