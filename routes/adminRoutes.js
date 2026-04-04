@@ -11,4 +11,9 @@ router.get("/users", adminController.getAllUsers);
 router.put("/users/:id/status", adminController.toggleUserStatus);
 router.delete("/users/:id", adminController.deleteUser);
 
+// Multi-Channel Service Providers Setup 
+router.post("/channels/providers", adminController.addProvider);
+router.get("/channels/providers", adminController.getProviders);
+router.put("/channels/providers/:id/default", adminController.setDefaultProvider);
+
 module.exports = router;

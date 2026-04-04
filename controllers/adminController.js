@@ -46,3 +46,54 @@ exports.deleteUser = (req, res) => {
     res.json({ success: true, message: "User hard-deleted from database." });
   });
 };
+
+// --- Multi-Channel Global Provider Settings ---
+exports.addProvider = (req, res) => {
+  const { channel, providerName, config, isDefault } = req.body;
+  
+  const sql = `INSERT INTO global_service_providers (channel, provider_name, config, is_default) VALUES (?, ?, ?, ?)`;
+  
+  if (isDefault) {
+     db.query(`UPDATE global_service_providers SET is_default = FALSE WHERE channel = ?`, [channel], () => {
+         db.query(sql, [channel, providerName, JSON.stringify(config || {}), true], (err) => {
+            if (err) return res.status(500).json({ error: err.message });
+            res.json({ success: true, message: `Active ${channel} provider mapped successfully.` });
+         });
+     });
+  } else {
+     db.query(sql, [channel, providerName, JSON.stringify(config || {}), false], (err) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json({ success: true, message: `Backup ${channel} provider mapped successfully.` });
+     });
+  }
+};
+
+exports.getProviders = (req, res) => {
+  db.query(`SELECT id, channel, provider_name, config, is_default, created_at FROM global_service_providers ORDER BY channel ASC, is_default DESC`, (err, results) => {
+     if (err) return res.status(500).json({ error: err.message });
+     
+     // Per the user's explicit request, we are NOT scrubbing configs right now!
+     const parsed = results.map(r => ({
+         ...r,
+         config: typeof r.config === 'string' ? JSON.parse(r.config) : (r.config || {})
+     }));
+     
+     res.json({ success: true, count: parsed.length, providers: parsed });
+  });
+};
+
+exports.setDefaultProvider = (req, res) => {
+  const { id } = req.params;
+  const { channel } = req.body; 
+
+  if (!channel) return res.status(400).json({ error: "Channel strictly required to isolate defaults." });
+
+  db.query(`UPDATE global_service_providers SET is_default = FALSE WHERE channel = ?`, [channel], (err) => {
+     if (err) return res.status(500).json({ error: err.message });
+     
+     db.query(`UPDATE global_service_providers SET is_default = TRUE WHERE id = ?`, [id], (err2) => {
+         if (err2) return res.status(500).json({ error: err2.message });
+         res.json({ success: true, message: "Default channel router updated physically." });
+     });
+  });
+};
