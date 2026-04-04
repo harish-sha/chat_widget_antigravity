@@ -46,6 +46,9 @@ app.use("/admin", adminRoutes);
 app.use("/notifications", notificationRoutes);
 app.use("/subscription", subscriptionRoutes);
 
+const utilityRoutes = require("./routes/utilityRoutes");
+app.use("/utils", utilityRoutes);
+
 app.use("/ai", aiRoutes);
 
 app.listen(8000, () => {
