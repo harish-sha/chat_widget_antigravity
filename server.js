@@ -25,9 +25,21 @@ const aiMetricsRoutes = require("./routes/aiMetricsRoutes");
 const convMetricsRoutes = require("./routes/conversationMetricsRoutes");
 const formMetricsRoutes = require("./routes/formMetricsRoutes");
 
+// Core Architecture Additions
+const authRoutes = require("./routes/authRoutes");
+const userRoutes = require("./routes/userRoutes");
+const adminRoutes = require("./routes/adminRoutes");
+const notificationRoutes = require("./routes/notificationRoutes");
+
 app.use("/ai/metrics", aiMetricsRoutes);
 app.use("/metrics/conversations", convMetricsRoutes);
 app.use("/metrics/forms", formMetricsRoutes);
+
+app.use("/auth", authRoutes);
+app.use("/user", userRoutes);
+app.use("/admin", adminRoutes);
+app.use("/notifications", notificationRoutes);
+
 app.use("/ai", aiRoutes);
 
 app.listen(8000, () => {
