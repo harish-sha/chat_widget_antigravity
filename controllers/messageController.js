@@ -2,46 +2,80 @@ const db = require("../db");
 const OpenAI = require("openai");
 
 async function triggerAIResponse(conversationId, widgetId, userMessage) {
-  const settingsSql = `SELECT * FROM widget_ai_settings WHERE widget_id = ? AND is_enabled = TRUE`;
+  // 1. Master Limits Gatekeeper (Check AI Quota globally before calculating RAG Vectors)
+  const limitsSql = `
+    SELECT usr.current_month_ai_usage, sub.status, pln.max_ai_queries 
+    FROM users usr 
+    LEFT JOIN subscriptions sub ON usr.widget_id = sub.widget_id AND sub.status = 'active'
+    LEFT JOIN saas_plans pln ON sub.plan_code = pln.plan_code 
+    WHERE usr.widget_id = ? 
+    LIMIT 1
+  `;
 
-  db.query(settingsSql, [widgetId], (err, settingsResult) => {
-    if (err || !settingsResult.length) return;
+  db.query(limitsSql, [widgetId], (err, limitRes) => {
+    if (err || !limitRes.length) return;
 
-    const settings = settingsResult[0];
-    if (!settings.api_key) return;
+    const row = limitRes[0];
+    const usage = row.current_month_ai_usage || 0;
+    // Hardcoded global default for totally free accounts with zero database rows
+    const maxLimit = row.max_ai_queries || 100;
 
-    const kbSql = `SELECT content, embedding FROM ai_knowledge_base WHERE widget_id = ? AND status = 'active'`;
-    db.query(kbSql, [widgetId], async (err, kbResult) => {
-      let kbContext = "";
-      if (!err && kbResult.length > 0) {
-        if (settings.api_key) {
-          try {
-            const aiService = require("../services/aiService");
-            const vectorMath = require("../utils/vectorMath");
-            const qVector = await aiService.embedText(settings.provider, settings.api_key, userMessage);
+    // Absolute Enforcer
+    if (usage >= maxLimit) {
+      const fallbackMsg = `[SaaS Platform Halt] Your widget has catastrophically exhausted its AI text generation bandwidth (${usage}/${maxLimit} hits). Please rapidly upgrade your subscription to resume RAG operations! Human fallback only.`;
+      const blockSql = `INSERT INTO messages (conversation_id, sender, message, message_type) VALUES (?, 'system', ?, 'system')`;
+      db.query(blockSql, [conversationId, fallbackMsg]);
 
-            const scored = kbResult.map(row => {
-              let score = 0;
-              if (row.embedding) {
-                const rowVector = typeof row.embedding === 'string' ? JSON.parse(row.embedding) : row.embedding;
-                score = vectorMath.cosineSimilarity(qVector, rowVector);
-              }
-              return { content: row.content, score };
-            });
+      const alertDispatcher = require("../services/alertDispatcher");
+      alertDispatcher.fire(widgetId, "ai_handover_request", { reason: `AI Limit Blockade Triggered: ${usage}/${maxLimit}`, conversationId });
 
-            scored.sort((a, b) => b.score - a.score);
-            kbContext = scored.slice(0, 4).map(s => s.content).join("\n\n");
-          } catch (e) {
-            console.error("Bot RAG Error: ", e.message);
+      return; // Violently stops the rest of the function from communicating with OpenAI
+    }
+
+    // Increment Usage mathematically because the AI is officially green-lit!
+    db.query(`UPDATE users SET current_month_ai_usage = current_month_ai_usage + 1 WHERE widget_id = ?`, [widgetId]);
+
+    // 2. Begin standard AI Matrix RAG execution...
+    const settingsSql = `SELECT * FROM widget_ai_settings WHERE widget_id = ? AND is_enabled = TRUE`;
+
+    db.query(settingsSql, [widgetId], (err, settingsResult) => {
+      if (err || !settingsResult.length) return;
+
+      const settings = settingsResult[0];
+      if (!settings.api_key) return;
+
+      const kbSql = `SELECT content, embedding FROM ai_knowledge_base WHERE widget_id = ? AND status = 'active'`;
+      db.query(kbSql, [widgetId], async (err, kbResult) => {
+        let kbContext = "";
+        if (!err && kbResult.length > 0) {
+          if (settings.api_key) {
+            try {
+              const aiService = require("../services/aiService");
+              const vectorMath = require("../utils/vectorMath");
+              const qVector = await aiService.embedText(settings.provider, settings.api_key, userMessage);
+
+              const scored = kbResult.map(row => {
+                let score = 0;
+                if (row.embedding) {
+                  const rowVector = typeof row.embedding === 'string' ? JSON.parse(row.embedding) : row.embedding;
+                  score = vectorMath.cosineSimilarity(qVector, rowVector);
+                }
+                return { content: row.content, score };
+              });
+
+              scored.sort((a, b) => b.score - a.score);
+              kbContext = scored.slice(0, 4).map(s => s.content).join("\n\n");
+            } catch (e) {
+              console.error("Bot RAG Error: ", e.message);
+            }
+          }
+
+          if (!kbContext) {
+            kbContext = kbResult.slice(0, 4).map(k => k.content).join("\n\n");
           }
         }
 
-        if (!kbContext) {
-          kbContext = kbResult.slice(0, 4).map(k => k.content).join("\n\n");
-        }
-      }
-
-      const historySql = `
+        const historySql = `
         SELECT sender, message 
         FROM (
           SELECT sender, message, created_at FROM messages 
@@ -51,92 +85,93 @@ async function triggerAIResponse(conversationId, widgetId, userMessage) {
         ORDER BY created_at ASC
       `;
 
-      db.query(historySql, [conversationId], async (err, historyResult) => {
-        if (err) return;
+        db.query(historySql, [conversationId], async (err, historyResult) => {
+          if (err) return;
 
-        const messages = [];
-        let sysPrompt = settings.system_prompt || "You are a helpful assistant.";
-        sysPrompt += `\nYour tone should be: ${settings.tone}.`;
-        if (settings.grammar_mode) sysPrompt += `\nPlease elegantly fix minor grammatical errors in your response context.`;
-        if (kbContext) {
-          sysPrompt += `\n\nUse the following verified knowledge context to answer questions:\n${kbContext}`;
-        }
+          const messages = [];
+          let sysPrompt = settings.system_prompt || "You are a helpful assistant.";
+          sysPrompt += `\nYour tone should be: ${settings.tone}.`;
+          if (settings.grammar_mode) sysPrompt += `\nPlease elegantly fix minor grammatical errors in your response context.`;
+          if (kbContext) {
+            sysPrompt += `\n\nUse the following verified knowledge context to answer questions:\n${kbContext}`;
+          }
 
-        for (let msg of historyResult) {
-          if (msg.message && typeof msg.message === 'string') {
-            const role = (msg.sender === 'bot' || msg.sender === 'agent') ? 'assistant' : 'user';
+          for (let msg of historyResult) {
+            if (msg.message && typeof msg.message === 'string') {
+              const role = (msg.sender === 'bot' || msg.sender === 'agent') ? 'assistant' : 'user';
 
-            if (messages.length > 0 && messages[messages.length - 1].role === role) {
-              messages[messages.length - 1].content += "\n" + msg.message;
-            } else {
-              messages.push({ role, content: msg.message });
+              if (messages.length > 0 && messages[messages.length - 1].role === role) {
+                messages[messages.length - 1].content += "\n" + msg.message;
+              } else {
+                messages.push({ role, content: msg.message });
+              }
             }
           }
-        }
 
-        if (messages.length === 0 || messages[messages.length - 1].content !== userMessage) {
-          if (messages.length > 0 && messages[messages.length - 1].role === "user") {
-            messages[messages.length - 1].content += "\n" + userMessage;
-          } else {
-            messages.push({ role: "user", content: userMessage });
+          if (messages.length === 0 || messages[messages.length - 1].content !== userMessage) {
+            if (messages.length > 0 && messages[messages.length - 1].role === "user") {
+              messages[messages.length - 1].content += "\n" + userMessage;
+            } else {
+              messages.push({ role: "user", content: userMessage });
+            }
           }
-        }
 
-        try {
-          const aiService = require("../services/aiService");
-          const botResponse = await aiService.generate({
-            provider: settings.provider,
-            apiKey: settings.api_key,
-            model: settings.model,
-            temperature: settings.temperature,
-            maxTokens: settings.max_tokens,
-            systemPrompt: sysPrompt,
-            messages: messages
-          });
+          try {
+            const aiService = require("../services/aiService");
+            const botResponse = await aiService.generate({
+              provider: settings.provider,
+              apiKey: settings.api_key,
+              model: settings.model,
+              temperature: settings.temperature,
+              maxTokens: settings.max_tokens,
+              systemPrompt: sysPrompt,
+              messages: messages
+            });
 
-          if (botResponse && botResponse.answer) {
-            const insertReplySql = `
+            if (botResponse && botResponse.answer) {
+              const insertReplySql = `
               INSERT INTO messages (conversation_id, sender, message, message_type)
               VALUES (?, 'bot', ?, 'text')
              `;
-            db.query(insertReplySql, [conversationId, botResponse.answer]);
+              db.query(insertReplySql, [conversationId, botResponse.answer]);
 
-            const logSql = `
+              const logSql = `
                INSERT INTO ai_metrics_log 
                  (widget_id, conversation_id, provider, model, temperature, latency_ms, prompt_tokens, completion_tokens, total_tokens, is_fallback)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
              `;
-            db.query(logSql, [
-              widgetId, conversationId,
-              settings.provider || 'openai', settings.model || 'gpt-3.5-turbo', settings.temperature ?? 0.7,
-              botResponse.metrics.latency, botResponse.metrics.promptTokens, botResponse.metrics.completionTokens, botResponse.metrics.totalTokens
-            ]);
-          }
+              db.query(logSql, [
+                widgetId, conversationId,
+                settings.provider || 'openai', settings.model || 'gpt-3.5-turbo', settings.temperature ?? 0.7,
+                botResponse.metrics.latency, botResponse.metrics.promptTokens, botResponse.metrics.completionTokens, botResponse.metrics.totalTokens
+              ]);
+            }
 
-        } catch (e) {
-          console.error("AI Gen Error:", e.message);
-          const fallback = settings.fallback_message || `AI failed to respond: ${e.message}`;
-          const errSql = `INSERT INTO messages (conversation_id, sender, message, message_type) VALUES (?, 'system', ?, 'system')`;
-          db.query(errSql, [conversationId, fallback]);
-          
-          // Physically trigger the master Alert Dispatcher
-          const alertDispatcher = require("../services/alertDispatcher");
-          alertDispatcher.fire(widgetId, "ai_handover_request", { reason: e.message, conversationId });
+          } catch (e) {
+            console.error("AI Gen Error:", e.message);
+            const fallback = settings.fallback_message || `AI failed to respond: ${e.message}`;
+            const errSql = `INSERT INTO messages (conversation_id, sender, message, message_type) VALUES (?, 'system', ?, 'system')`;
+            db.query(errSql, [conversationId, fallback]);
 
-          const logErrSql = `
+            // Physically trigger the master Alert Dispatcher
+            const alertDispatcher = require("../services/alertDispatcher");
+            alertDispatcher.fire(widgetId, "ai_handover_request", { reason: e.message, conversationId });
+
+            const logErrSql = `
              INSERT INTO ai_metrics_log 
                (widget_id, conversation_id, provider, model, temperature, latency_ms, is_fallback, error_message)
              VALUES (?, ?, ?, ?, ?, 0, 1, ?)
           `;
-          db.query(logErrSql, [
-            widgetId, conversationId,
-            settings.provider || 'openai', settings.model || 'gpt-3.5-turbo', settings.temperature ?? 0.7,
-            e.message
-          ]);
-        }
+            db.query(logErrSql, [
+              widgetId, conversationId,
+              settings.provider || 'openai', settings.model || 'gpt-3.5-turbo', settings.temperature ?? 0.7,
+              e.message
+            ]);
+          }
+        });
       });
     });
-  });
+  }); // Close the limitsSql query wrapper specifically!
 }
 
 exports.sendMessage = (req, res) => {
@@ -165,7 +200,7 @@ exports.sendMessage = (req, res) => {
             if (bot_active) {
               triggerAIResponse(conversationId, widget_id, message);
             }
-            
+
             // Physically trigger the master Alert Dispatcher
             const alertDispatcher = require("../services/alertDispatcher");
             alertDispatcher.fire(widget_id, "new_inbound_message", { message, conversationId, sender });

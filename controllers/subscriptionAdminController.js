@@ -2,48 +2,50 @@ const db = require("../db");
 
 // --- API explicitly shielded exclusively for the Super Admin Root ---
 
-// Adds a physically available Plan to the database architecture mapping to a Stripe Price
+// Adds a physically available Plan to the database architecture mapping to a Stripe OR Razorpay Price
 exports.createPlan = (req, res) => {
-   const { planCode, name, priceMonthly, stripePriceId, maxAiQueries, maxAgents, features } = req.body;
-   
-   if (!planCode || !stripePriceId) return res.status(400).json({ error: "Missing highly critical planCode or Stripe ID mappings." });
+    const { planCode, name, priceMonthly, stripePriceId, razorpayPlanId, maxAiQueries, maxAgents, features } = req.body;
 
-   const sql = `
-     INSERT INTO saas_plans (plan_code, name, price_monthly, stripe_price_id, max_ai_queries, max_agents, features_json)
-     VALUES (?, ?, ?, ?, ?, ?, ?)
+    if (!planCode || (!stripePriceId && !razorpayPlanId)) {
+        return res.status(400).json({ error: "Missing highly critical planCode or at least one Gateway ID mapping." });
+    }
+
+    const sql = `
+     INSERT INTO saas_plans (plan_code, name, price_monthly, stripe_price_id, razorpay_plan_id, max_ai_queries, max_agents, features_json)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
    `;
 
-   db.query(sql, [planCode, name, priceMonthly || 0, stripePriceId, maxAiQueries || 100, maxAgents || 1, JSON.stringify(features || {})], (err) => {
-       if (err) return res.status(500).json({ error: "Duplicate plan_code or schema error: " + err.message });
-       res.json({ success: true, message: `High-Tier Plan '${name}' officially mapped to the ecosystem!` });
-   });
+    db.query(sql, [planCode, name, priceMonthly || 0, stripePriceId || null, razorpayPlanId || null, maxAiQueries || 100, maxAgents || 1, JSON.stringify(features || {})], (err) => {
+        if (err) return res.status(500).json({ error: "Duplicate plan_code or schema error: " + err.message });
+        res.json({ success: true, message: `High-Tier Plan '${name}' officially multi-mapped to the ecosystem!` });
+    });
 };
 
 // Gets all plans for the Admin Dashboard to modify pricing heavily
 exports.getAllPlans = (req, res) => {
-   db.query(`SELECT * FROM saas_plans ORDER BY price_monthly ASC`, (err, results) => {
-       if (err) return res.status(500).json({ error: err.message });
-       
-       const parsedRaw = results.map(r => ({
-           ...r,
-           features_json: typeof r.features_json === 'string' ? JSON.parse(r.features_json) : r.features_json
-       }));
+    db.query(`SELECT * FROM saas_plans ORDER BY price_monthly ASC`, (err, results) => {
+        if (err) return res.status(500).json({ error: err.message });
 
-       res.json({ success: true, count: parsedRaw.length, plans: parsedRaw });
-   });
+        const parsedRaw = results.map(r => ({
+            ...r,
+            features_json: typeof r.features_json === 'string' ? JSON.parse(r.features_json) : r.features_json
+        }));
+
+        res.json({ success: true, count: parsedRaw.length, plans: parsedRaw });
+    });
 };
 
 // Gives the God-Mode Admin a physical overview of exactly who is paying actively and who bounced
 exports.getGlobalSubscriptions = (req, res) => {
-   const sql = `
+    const sql = `
       SELECT sub.*, usr.email, usr.name as owner_name 
       FROM subscriptions sub
       LEFT JOIN users usr ON sub.widget_id = usr.widget_id
       ORDER BY sub.updated_at DESC
    `;
 
-   db.query(sql, [], (err, results) => {
-       if (err) return res.status(500).json({ error: err.message });
-       res.json({ success: true, active_subscribers: results.length, data: results });
-   });
+    db.query(sql, [], (err, results) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json({ success: true, active_subscribers: results.length, data: results });
+    });
 };

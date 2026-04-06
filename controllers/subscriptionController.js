@@ -61,23 +61,36 @@ exports.getMySubscription = (req, res) => {
    });
 };
 
-// Generates the massive physical URL bounding them to Stripe's payment form
+// Generates the massive physical URL bounding them to Stripe or Razorpay's payment form
 exports.createCheckout = (req, res) => {
-   const { planCode } = req.body;
+   const { planCode, gateway } = req.body; // 'stripe' or 'razorpay'
    const widgetId = req.user.widgetId;
    const email = req.user.email; // Pulled straight from JWT logic securely
 
-   db.query(`SELECT stripe_price_id FROM saas_plans WHERE plan_code = ? AND is_active = TRUE`, [planCode], async (err, results) => {
+   if (!gateway || !['stripe', 'razorpay'].includes(gateway)) {
+       return res.status(400).json({ error: "Critically invalid or missing payment Gateway. Must be 'stripe' or 'razorpay'." });
+   }
+
+   db.query(`SELECT stripe_price_id, razorpay_plan_id FROM saas_plans WHERE plan_code = ? AND is_active = TRUE`, [planCode], async (err, results) => {
        if (err) return res.status(500).json({ error: err.message });
        if (!results.length) return res.status(400).json({ error: "Critically invalid plan explicitly requested." });
 
-       const StripePrice = results[0].stripe_price_id;
+       const row = results[0];
        
        try {
-           const checkoutUrl = await stripeService.createCheckoutSession(StripePrice, widgetId, email);
-           res.json({ success: true, url: checkoutUrl });
+           if (gateway === 'stripe') {
+               if (!row.stripe_price_id) return res.status(400).json({ error: "This specific plan is not mapped globally to Stripe." });
+               const checkoutUrl = await stripeService.createCheckoutSession(row.stripe_price_id, widgetId, email);
+               res.json({ success: true, gateway: 'stripe', url: checkoutUrl });
+           } 
+           else if (gateway === 'razorpay') {
+               const razorpayService = require("../services/razorpayService");
+               if (!row.razorpay_plan_id) return res.status(400).json({ error: "This specific plan is not mapped to the Indian Razorpay Gateway." });
+               const razorData = await razorpayService.createCheckoutSession(row.razorpay_plan_id, widgetId, email);
+               res.json({ success: true, gateway: 'razorpay', url: razorData.url, subscription_id: razorData.subscription_id });
+           }
        } catch (e) {
-           res.status(500).json({ error: "Failed to compile Stripe Engine checkout", details: e.message });
+           res.status(500).json({ error: `Failed to compile ${gateway.toUpperCase()} Engine checkout`, details: e.message });
        }
    });
 };
@@ -97,6 +110,73 @@ exports.createPortal = (req, res) => {
            res.json({ success: true, url: portalUrl });
        } catch (e) {
            res.status(500).json({ error: "Failed resolving Stripe Engine Portal", details: e.message });
+       }
+   });
+};
+
+// Manually Verifies a Subscription Status if Webhooks fail locally (Bypass)
+exports.createVerify = (req, res) => {
+   const { subscriptionId, gateway } = req.body;
+   const widgetId = req.user.widgetId;
+
+   if (!subscriptionId || !gateway) return res.status(400).json({ error: "Missing highly critical subscription verification identifiers" });
+
+   if (gateway === 'razorpay') {
+       const razorpayService = require("../services/razorpayService");
+       razorpayService.razorpay.subscriptions.fetch(subscriptionId).then(sub => {
+           if (sub.status === 'active') {
+               const planId = sub.plan_id;
+               const customerId = sub.customer_id || 'manual_sync_customer';
+               db.query(`SELECT plan_code FROM saas_plans WHERE razorpay_plan_id = ? LIMIT 1`, [planId], (err, results) => {
+                   if (err || !results.length) return res.status(400).json({ error: "Invalid Razorpay plan inside verification." });
+                   const planCode = results[0].plan_code;
+                   const upsertSql = `
+                      INSERT INTO subscriptions (widget_id, gateway_used, plan_code, stripe_customer_id, razorpay_subscription_id, status, current_period_end)
+                      VALUES (?, 'razorpay', ?, ?, ?, 'active', FROM_UNIXTIME(?))
+                      ON DUPLICATE KEY UPDATE 
+                         gateway_used = 'razorpay', plan_code = ?, stripe_customer_id = ?, razorpay_subscription_id = ?, status = 'active', current_period_end = FROM_UNIXTIME(?)
+                   `;
+                   const values = [widgetId, planCode, customerId, subscriptionId, sub.current_end, planCode, customerId, subscriptionId, sub.current_end];
+                   db.query(upsertSql, values, () => {
+                       res.json({ success: true, message: "Manual Razorpay Verification Succeeded! Database Flipped to Active.", status: 'active' });
+                   });
+               });
+           } else {
+               res.status(400).json({ error: "Razorpay Native API confirms subscription is NOT active." });
+           }
+       }).catch(e => {
+           const rzpDesc = Object.keys(e).length ? JSON.stringify(e) : String(e);
+           res.status(500).json({ error: "Failed to deeply verify with Razorpay", details: rzpDesc });
+       });
+   } else if (gateway === 'stripe') {
+       res.status(400).json({ error: "Please rely on native Stripe Webhooks for Stripe testing, or pass Razorpay" });
+   }
+};
+
+// Universal Cancel (Native API termination independent of WebUIs)
+exports.createCancel = (req, res) => {
+   const widgetId = req.user.widgetId;
+
+   db.query(`SELECT gateway_used, stripe_subscription_id, razorpay_subscription_id FROM subscriptions WHERE widget_id = ? AND status = 'active'`, [widgetId], async (err, results) => {
+       if (err) return res.status(500).json({ error: err.message });
+       if (!results.length) return res.status(400).json({ error: "No active subscription physical row found to terminate." });
+       
+       const row = results[0];
+       try {
+           if (row.gateway_used === 'stripe') {
+               const stripeService = require("../services/stripeService");
+               await stripeService.stripe.subscriptions.update(row.stripe_subscription_id, { cancel_at_period_end: true });
+               db.query(`UPDATE subscriptions SET cancel_at_period_end = 1 WHERE widget_id = ?`, [widgetId]);
+               res.json({ success: true, message: "Stripe Subscription canceled cleanly at period end." });
+           } else if (row.gateway_used === 'razorpay') {
+               const razorpayService = require("../services/razorpayService");
+               // Cancel at end of cycle -> false parameter (do not cancel immediately, wait till end)
+               await razorpayService.razorpay.subscriptions.cancel(row.razorpay_subscription_id, false);
+               db.query(`UPDATE subscriptions SET cancel_at_period_end = 1 WHERE widget_id = ?`, [widgetId]);
+               res.json({ success: true, message: "Razorpay Subscription formally canceled natively at period end." });
+           }
+       } catch(e) {
+           res.status(500).json({ error: "Failed Universal Gateway Termination Array", details: String(e) });
        }
    });
 };

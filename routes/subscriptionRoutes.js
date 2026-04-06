@@ -10,8 +10,10 @@ router.use(authMiddleware);
 router.get("/plans", subController.getAvailablePlans);
 router.get("/my-limits", subController.getMySubscription);
 
-// Financial Stripe Bridges
+// Financial Dual-Gateway Bridges
 router.post("/checkout", subController.createCheckout);
-router.post("/portal", subController.createPortal);
+router.post("/portal", subController.createPortal); // Stripe natively
+router.post("/verify", subController.createVerify); // Developer test bypass
+router.post("/cancel", subController.createCancel); // Universal termination
 
 module.exports = router;

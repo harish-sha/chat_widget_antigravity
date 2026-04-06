@@ -1,6 +1,7 @@
 const Stripe = require('stripe');
 // The Admin should configure this inside their ENV eventually, but we fall back to a dummy key to prevent crashes while testing
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || 'sk_test_fake_api_key_123', {
+// const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || 'sk_test_fake_api_key_123', {
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
   apiVersion: '2023-10-16'
 });
 
@@ -24,7 +25,7 @@ exports.createCheckoutSession = async (priceId, widgetId, customerEmail, success
     customer_email: customerEmail,
     client_reference_id: widgetId, // This is explicitly returned in the massive Stripe Webhook payload!
     metadata: {
-       widget_id: widgetId
+      widget_id: widgetId
     }
   });
 
@@ -35,10 +36,10 @@ exports.createCheckoutSession = async (priceId, widgetId, customerEmail, success
  * Creates the official Stripe Customer Portal where users download massive PDF invoices or swap Credit Cards
  */
 exports.createBillingPortalSession = async (customerId, returnUrl) => {
-   const session = await stripe.billingPortal.sessions.create({
-       customer: customerId,
-       return_url: returnUrl || 'http://localhost:3000/dashboard/billing'
-   });
+  const session = await stripe.billingPortal.sessions.create({
+    customer: customerId,
+    return_url: returnUrl || 'http://localhost:3000/dashboard/billing'
+  });
 
-   return session.url;
+  return session.url;
 };
