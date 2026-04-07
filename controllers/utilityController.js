@@ -13,10 +13,10 @@ exports.handleUpload = (req, res) => {
        INSERT INTO uploaded_media (widget_id, uploader_id, file_name, original_name, mime_type, file_size, url)
        VALUES (?, ?, ?, ?, ?, ?, ?)
    `;
-   
+
    db.query(sql, [widgetId, uploaderId, req.file.filename, req.file.originalname, req.file.mimetype, req.file.size, publicFileUrl], (err, insertResult) => {
       if (err) return res.status(500).json({ error: "File saved internally but database mapping crashed: " + err.message });
-      
+
       res.json({
          success: true,
          message: "Media securely hosted in SaaS Environment",

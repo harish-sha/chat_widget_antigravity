@@ -1,7 +1,7 @@
 require('dotenv').config();
 const express = require("express");
 const cors = require("cors");
-const db = require("./db"); 
+const db = require("./db");
 
 const widgetRoutes = require("./routes/widgetRoutes");
 const formRoutes = require("./routes/formRoutes");
@@ -19,6 +19,59 @@ app.use(express.json());
 
 // Razorpay fundamentally differs from Stripe; it uses strictly parsed JSON bodies for its crypto Hashing mechanism
 app.use("/webhooks/razorpay", require("./routes/razorpayWebhook"));
+
+// ---- GLOBAL JSON ENTERPRISE INTERCEPTOR ----
+app.use((req, res, next) => {
+  const originalJson = res.json;
+
+  res.json = function (obj) {
+    // Prevent recursive double wrapping if already perfectly standard
+    if (obj && Object.prototype.hasOwnProperty.call(obj, 'success') && Object.prototype.hasOwnProperty.call(obj, 'data') && Object.prototype.hasOwnProperty.call(obj, 'error')) {
+      return originalJson.call(this, obj);
+    }
+
+    const statusCode = res.statusCode;
+    const isSuccess = statusCode >= 200 && statusCode < 300;
+
+    // 1. Hard Failure Engine Map
+    // If it's a 4xx/5xx code OR the controller returned { error: "..." } independently
+    if (!isSuccess || (obj && obj.error !== undefined)) {
+      return originalJson.call(this, {
+        success: false,
+        data: null,
+        error: (obj && obj.error) ? obj.error : "An unexpected Node Infrastructure rejection occurred.",
+        details: (obj && obj.details) ? obj.details : undefined
+      });
+    }
+
+    // 2. Clean Data Payload Wrapper
+    let cleanData = obj;
+    let explicitMessage = null;
+
+    if (typeof obj === 'object' && obj !== null) {
+      cleanData = { ...obj };
+      // Purge loose keys from older controllers before injecting into the Master Schema
+      if (cleanData.success !== undefined) delete cleanData.success;
+      if (cleanData.error !== undefined) delete cleanData.error;
+      
+      // Extract literal 'message' string logically up to the parent wrapper!
+      if (cleanData.message !== undefined) {
+          explicitMessage = cleanData.message;
+          delete cleanData.message;
+      }
+    }
+
+    // 3. Eject Formatted Object
+    return originalJson.call(this, {
+      success: true,
+      message: explicitMessage,
+      data: Object.keys(cleanData).length > 0 ? cleanData : null,
+      error: null
+    });
+  };
+  next();
+});
+// --------------------------------------------
 
 app.use(express.static("public"));
 

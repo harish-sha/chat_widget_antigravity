@@ -50,6 +50,7 @@ exports.getMySubscription = (req, res) => {
           has_subscription: true,
           status: row.status, // "active", "past_due"
           current_period_end: row.current_period_end,
+          cancel_at_period_end: !!row.cancel_at_period_end, // Exposes the flag cleanly to React
           limits: {
               plan_code: row.plan_code,
               name: row.name,
@@ -63,7 +64,12 @@ exports.getMySubscription = (req, res) => {
 
 // Generates the massive physical URL bounding them to Stripe or Razorpay's payment form
 exports.createCheckout = (req, res) => {
-   const { planCode, gateway } = req.body; // 'stripe' or 'razorpay'
+   const { planCode, gateway } = req.body || {}; // Default safely to empty object to prevent Node crashing
+
+   if (!planCode) {
+       return res.status(400).json({ error: "Critically invalid or missing 'planCode' in JSON body." });
+   }
+
    const widgetId = req.user.widgetId;
    const email = req.user.email; // Pulled straight from JWT logic securely
 
@@ -131,10 +137,10 @@ exports.createVerify = (req, res) => {
                    if (err || !results.length) return res.status(400).json({ error: "Invalid Razorpay plan inside verification." });
                    const planCode = results[0].plan_code;
                    const upsertSql = `
-                      INSERT INTO subscriptions (widget_id, gateway_used, plan_code, stripe_customer_id, razorpay_subscription_id, status, current_period_end)
-                      VALUES (?, 'razorpay', ?, ?, ?, 'active', FROM_UNIXTIME(?))
+                      INSERT INTO subscriptions (widget_id, gateway_used, plan_code, stripe_customer_id, razorpay_subscription_id, status, current_period_end, cancel_at_period_end)
+                      VALUES (?, 'razorpay', ?, ?, ?, 'active', FROM_UNIXTIME(?), 0)
                       ON DUPLICATE KEY UPDATE 
-                         gateway_used = 'razorpay', plan_code = ?, stripe_customer_id = ?, razorpay_subscription_id = ?, status = 'active', current_period_end = FROM_UNIXTIME(?)
+                         gateway_used = 'razorpay', plan_code = ?, stripe_customer_id = ?, razorpay_subscription_id = ?, status = 'active', current_period_end = FROM_UNIXTIME(?), cancel_at_period_end = 0
                    `;
                    const values = [widgetId, planCode, customerId, subscriptionId, sub.current_end, planCode, customerId, subscriptionId, sub.current_end];
                    db.query(upsertSql, values, () => {
@@ -157,11 +163,17 @@ exports.createVerify = (req, res) => {
 exports.createCancel = (req, res) => {
    const widgetId = req.user.widgetId;
 
-   db.query(`SELECT gateway_used, stripe_subscription_id, razorpay_subscription_id FROM subscriptions WHERE widget_id = ? AND status = 'active'`, [widgetId], async (err, results) => {
+   db.query(`SELECT gateway_used, stripe_subscription_id, razorpay_subscription_id, cancel_at_period_end FROM subscriptions WHERE widget_id = ? AND status = 'active'`, [widgetId], async (err, results) => {
        if (err) return res.status(500).json({ error: err.message });
        if (!results.length) return res.status(400).json({ error: "No active subscription physical row found to terminate." });
        
        const row = results[0];
+
+       // Prevent user from violently spamming the Cancel Subscription button if already aborted!
+       if (row.cancel_at_period_end) {
+           return res.status(400).json({ error: "This subscription is cleanly scheduled for termination already! No action needed." });
+       }
+
        try {
            if (row.gateway_used === 'stripe') {
                const stripeService = require("../services/stripeService");
@@ -170,13 +182,14 @@ exports.createCancel = (req, res) => {
                res.json({ success: true, message: "Stripe Subscription canceled cleanly at period end." });
            } else if (row.gateway_used === 'razorpay') {
                const razorpayService = require("../services/razorpayService");
-               // Cancel at end of cycle -> false parameter (do not cancel immediately, wait till end)
-               await razorpayService.razorpay.subscriptions.cancel(row.razorpay_subscription_id, false);
+               // Cancel parameter `true` cleanly tells Razorpay to terminate at the end of the billing cycle
+               await razorpayService.razorpay.subscriptions.cancel(row.razorpay_subscription_id, true);
                db.query(`UPDATE subscriptions SET cancel_at_period_end = 1 WHERE widget_id = ?`, [widgetId]);
                res.json({ success: true, message: "Razorpay Subscription formally canceled natively at period end." });
            }
        } catch(e) {
-           res.status(500).json({ error: "Failed Universal Gateway Termination Array", details: String(e) });
+           const rzpDesc = (e.error && e.error.description) ? e.error.description : String(e);
+           res.status(500).json({ error: "Failed Universal Gateway Termination Array", details: rzpDesc });
        }
    });
 };
