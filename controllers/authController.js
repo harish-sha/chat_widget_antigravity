@@ -105,3 +105,33 @@ exports.googleLogin = async (req, res) => {
     res.status(401).json({ error: "Invalid Google Token received on Backend", details: e.message });
   }
 };
+
+// Pure Agent Login execution
+exports.agentLogin = (req, res) => {
+  const { email, password } = req.body;
+  if (!email || !password) return res.status(400).json({ error: "Email and password required for agent login." });
+
+  db.query(`SELECT * FROM human_agents WHERE email = ?`, [email], async (err, result) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!result.length) return res.status(401).json({ error: "Invalid agent credentials." });
+
+    const agent = result[0];
+    if (agent.status !== 'active') return res.status(403).json({ error: "Agent access suspended heavily by SaaS Administrator." });
+
+    const match = await bcrypt.compare(password, agent.password_hash);
+    if (!match) return res.status(401).json({ error: "Invalid agent credentials." });
+
+    // Generates a strict JWT bounding them to 'agent' role natively
+    const token = jwt.sign(
+      { id: agent.id, email: agent.email, widgetId: agent.widget_id, role: 'agent' },
+      JWT_SECRET,
+      { expiresIn: "10h" } // Agents get shorter sessions for security
+    );
+
+    res.json({
+      success: true,
+      token,
+      user: { id: agent.id, name: agent.name, email: agent.email, role: 'agent', widgetId: agent.widget_id }
+    });
+  });
+};

@@ -8,6 +8,7 @@ const formRoutes = require("./routes/formRoutes");
 const conversationRoutes = require("./routes/conversationRoutes");
 const messageRoutes = require("./routes/messageRoutes");
 const aiRoutes = require("./routes/aiRoutes");
+const agentRoutes = require("./routes/agentRoutes");
 
 const app = express();
 
@@ -53,11 +54,11 @@ app.use((req, res, next) => {
       // Purge loose keys from older controllers before injecting into the Master Schema
       if (cleanData.success !== undefined) delete cleanData.success;
       if (cleanData.error !== undefined) delete cleanData.error;
-      
+
       // Extract literal 'message' string logically up to the parent wrapper!
       if (cleanData.message !== undefined) {
-          explicitMessage = cleanData.message;
-          delete cleanData.message;
+        explicitMessage = cleanData.message;
+        delete cleanData.message;
       }
     }
 
@@ -81,6 +82,7 @@ app.use("/form", formRoutes);
 app.use("/conversation", conversationRoutes);
 app.use("/conversations", conversationRoutes);
 app.use("/messages", messageRoutes);
+app.use("/agents", agentRoutes);
 
 const aiMetricsRoutes = require("./routes/aiMetricsRoutes");
 const convMetricsRoutes = require("./routes/conversationMetricsRoutes");
